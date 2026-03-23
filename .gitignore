@@ -1,0 +1,7 @@
+# 忽略模型参数文件夹
+models/*
+!models/.gitkeep
+
+# 忽略数据文件夹
+data/*
+!data/.gitkeep

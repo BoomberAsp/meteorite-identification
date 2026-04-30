@@ -1,0 +1,11 @@
+# 忽略模型参数文件夹
+models/*
+!models/.gitkeep
+
+
+# 忽略数据文件夹
+data/*
+!data/.gitkeep
+!data/dataset.py
+!data/sample_submission.csv
+!data/train_labels.csv

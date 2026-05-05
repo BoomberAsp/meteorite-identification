@@ -56,8 +56,7 @@ def main(args):
                              num_workers=args.num_workers)
 
     # 加载模型
-    # model = get_model(model_name=args.model, num_classes=2, pretrained=False).to(device)
-    model = get_model(model_name=args.model, weights_path=args.model_path, num_classes=2, pretrained=False).to(device)
+    model = get_model(model_name=args.model, num_classes=2, pretrained=False).to(device)
     checkpoint = torch.load(args.model_path, map_location=device)
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])

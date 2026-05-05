@@ -164,6 +164,11 @@ def main(args):
 
     # 确定输入尺寸
     input_size = args.input_size
+
+    supported_resnets = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']
+    if args.model in supported_resnets:
+        input_size = 224 
+
     if args.model.startswith('efficientnet'):
         if 'b0' in args.model:
             input_size = 224
@@ -175,8 +180,6 @@ def main(args):
             input_size = 300
         elif 'b4' in args.model:
             input_size = 380
-    if args.model == 'resnet50':
-        input_size = 224
 
 
     # 数据集

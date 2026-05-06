@@ -55,7 +55,7 @@ def load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite/final_ada
                 raise FileNotFoundError(f"测试图像 {i:06d} 在 {IMAGE_INPUT} 中未找到！请检查文件名和格式。")
         image = Image.open(test_image_path).convert("RGB")
         # 如果训练时使用了 thumbnail 缩放，这里也要保持一致
-        image.thumbnail((560, 560), Image.Resampling.LANCZOS)  # 与训练时相同尺寸
+        image.thumbnail((720, 720), Image.Resampling.LANCZOS)  # 与训练时相同尺寸
 
         # 5. 构造指令（与训练时相同的模板）
         instruction = "请观察这张图片的纹理特征，判断其中是否有陨石？回答时首先给出“是”或“否”，然后简要说明理由。"
@@ -96,7 +96,7 @@ def load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite/final_ada
         print(f"第{i}张图片的模型回答:", generated_text)
 
 
-def load_model(lora_model_name="qwen3-vl-lora-meteorite/final_adapter"):
+def load_model(lora_model_name="qwen3-vl-lora-meteorite_20260504_123315/final_adapter_20260504_123315"):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     print(f"当前脚本目录: {BASE_DIR}")
     DATA_ROOT = os.path.join(BASE_DIR, "../../data")
@@ -158,7 +158,7 @@ def predict(model, processor, test_loader, device):
             # 缩放图像（与训练时一致）
             scaled_images = []
             for img in images:
-                img.thumbnail((560, 560), Image.Resampling.LANCZOS)
+                img.thumbnail((720, 720), Image.Resampling.LANCZOS)
                 scaled_images.append(img)
 
             # 为每个样本生成文本（使用相同的指令）
@@ -201,4 +201,4 @@ def predict(model, processor, test_loader, device):
 
 
 if __name__ == "__main__":
-    load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite_20260327_095503/final_adapter_20260327_095503")
+    load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite_20260504_123315/final_adapter_20260504_123315")

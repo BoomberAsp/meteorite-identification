@@ -14,6 +14,7 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, TaskType
 from transformers import BitsAndBytesConfig
 from transformers.trainer_callback import TrainerCallback, TrainerControl, TrainerState
+from transformers.trainer_utils import EvalLoopOutput
 from transformers.training_args import TrainingArguments
 import numpy as np
 
@@ -54,12 +55,12 @@ class EpochLossCallback(TrainerCallback):
                 prev_loss = self.epoch_losses[-2]
                 change = epoch_loss - prev_loss
                 if change < 0:
-                    print(f"   📉 相比上一 epoch 下降：{abs(change):.4f}")
+                    print(f"    相比上一 epoch 下降：{abs(change):.4f}")
                 else:
-                    print(f"   📊 相比上一 epoch 上升：{change:.4f}")
+                    print(f"    相比上一 epoch 上升：{change:.4f}")
 
             if len(self.epoch_losses) % 5 == 0 or len(self.epoch_losses) == args.num_train_epochs:
-                print(f"\n📊 Epoch Loss 历史:")
+                print(f"\n Epoch Loss 历史:")
                 for i, loss in enumerate(self.epoch_losses, 1):
                     print(f"   Epoch {i}: {loss:.4f}")
         print(f"{'='*50}")
@@ -68,7 +69,7 @@ class EpochLossCallback(TrainerCallback):
 # ================= 自定义 Trainer：添加更详细的日志 =================
 class DebugTrainer(Trainer):
     """
-    扩展 Trainer 以添加更详细的调试信息
+    扩展 Trainer 以添加更详细的调试信息和显存管理
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -81,6 +82,42 @@ class DebugTrainer(Trainer):
         print(f"   总 batch 数：{len(dataloader)}")
         print(f"   每 batch 样本数：{self.args.per_device_train_batch_size}")
         return dataloader
+    
+    def evaluation_loop(self, dataloader, description, prediction_loss_only, ignore_keys=None, metric_key_prefix="eval"):
+        """
+        重写 evaluation_loop，手动控制每个 batch 并释放显存，
+        返回 EvalLoopOutput 对象以避免 AttributeError。
+        """
+        import torch
+        import gc
+
+        self.model.eval()
+        total_loss = 0.0
+        num_batches = 0
+
+        for step, batch in enumerate(dataloader):
+            batch = {k: v.to(self.args.device) for k, v in batch.items()}
+            with torch.inference_mode():
+                outputs = self.model(**batch)
+                loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
+                total_loss += loss.item()
+                num_batches += 1
+
+            # 删除 batch 和 outputs 引用，释放显存
+            del batch, outputs
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # 可选：打印显存使用情况（调试用）
+            # if (step + 1) % 10 == 0:
+            #     allocated = torch.cuda.memory_allocated() / 1e9
+            #     print(f"Step {step+1}, GPU memory allocated: {allocated:.2f} GB")
+
+        avg_loss = total_loss / num_batches
+
+        # 构建 EvalLoopOutput 对象
+        metrics = {f"{metric_key_prefix}_loss": avg_loss}
+        return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=len(dataloader.dataset))
 
 
 # ================= 1. 配置参数 =================
@@ -88,7 +125,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT = os.path.join(BASE_DIR, "../../data")
 MODEL_ROOT = os.path.join(BASE_DIR, "../../models")
 MODEL_ID = os.path.join(MODEL_ROOT, "Qwen3-VL-8B-Instruct")
-DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train.jsonl")
+DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_simple.jsonl")  # 简化output版本
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_DIR = os.path.join(MODEL_ROOT, f"qwen3-vl-lora-meteorite_{TIMESTAMP}")
 
@@ -127,7 +164,7 @@ def train():
     # ================= 3. 配置 LoRA =================
     print("\n🔧 配置 LoRA...")
     lora_config = LoraConfig(
-        r=256,
+        r=64,  # 简化output，降低rank防止过拟合
         lora_alpha=128,
         target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.1,
@@ -149,12 +186,20 @@ def train():
     train_dataset = train_test["train"]
     val_dataset = train_test["test"]
 
-    print(f"\n📊 数据集划分完成:")
+    print(f"\n 数据集划分完成:")
     print(f"   训练集：{len(train_dataset)} 条 ({len(train_dataset)/len(raw_dataset)*100:.1f}%)")
     print(f"   验证集：{len(val_dataset)} 条 ({len(val_dataset)/len(raw_dataset)*100:.1f}%)")
+    
+    # 训练时评估用的子集（减少显存占用，避免OOM）
+    EVAL_SUBSET_SIZE = 100  # 训练过程中评估的样本数
+    eval_subset = val_dataset.shuffle(seed=42).select(range(min(EVAL_SUBSET_SIZE, len(val_dataset))))
+    print(f"   评估子集：{len(eval_subset)} 条 (用于训练过程中快速评估，避免OOM)")
+    
+    # 保留完整验证集用于最终评估
+    full_val_dataset = val_dataset
 
     # 打印样本
-    print("\n🔍 训练数据样例（前 2 条）:")
+    print("\n 训练数据样例（前 2 条）:")
     for i in range(min(2, len(train_dataset))):
         print(f"  样本 {i+1}: image_path={train_dataset[i]['image_path'][:50]}...")
 
@@ -168,7 +213,7 @@ def train():
             for ex in examples:
                 try:
                     img = Image.open(ex["image_path"]).convert("RGB")
-                    img.thumbnail((560, 560), Image.Resampling.LANCZOS)
+                    img.thumbnail((720, 720), Image.Resampling.LANCZOS)
                     images.append(img)
                 except Exception as e:
                     print(f"❌ 加载图像失败 {ex['image_path']}: {e}")
@@ -204,7 +249,7 @@ def train():
     print("\n⚙️ 配置训练参数...")
 
     # 计算每 0.1 个 epoch 的步数
-    PER_DEVICE_BATCH = 4
+    PER_DEVICE_BATCH = 2
     GRADIENT_ACCUMULATION = 4
     effective_batch_size = PER_DEVICE_BATCH * GRADIENT_ACCUMULATION
     steps_per_epoch = len(train_dataset) // effective_batch_size
@@ -220,10 +265,9 @@ def train():
         per_device_train_batch_size=PER_DEVICE_BATCH,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION,
         learning_rate=1e-4,
-        num_train_epochs=2,
+        num_train_epochs=3,  # 增加epochs充分学习
         bf16=True,
         logging_steps=10,
-        save_steps=200,
         save_total_limit=3,
         lr_scheduler_type="cosine",
         warmup_ratio=0.1,
@@ -234,9 +278,13 @@ def train():
         optim="adamw_torch",
         dataloader_num_workers=2,
         dataloader_pin_memory=True,
+        per_device_eval_batch_size=1,
+        fp16_full_eval=False,                  # 评估时保持 bf16 精度
         eval_strategy="steps",              # 按步数评估
         eval_steps=eval_steps,              # 每 0.1 个 epoch 评估一次
-        save_strategy="epoch",              # 按步数保存
+        eval_accumulation_steps=1,
+        save_strategy="steps",              # 按步数保存（与 eval_strategy 一致)
+        save_steps=eval_steps,              # 保存间隔与评估间隔一致
         load_best_model_at_end=True,        # 训练结束时加载最佳模型
         metric_for_best_model="eval_loss",  # 以验证集 loss 为标准
         greater_is_better=False,            # loss 越小越好
@@ -250,7 +298,7 @@ def train():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=val_dataset,         # 添加验证集
+        eval_dataset=eval_subset,         # 训练时用小规模评估集避免OOM
         data_collator=QwenVLDataCollator(processor),
         compute_metrics=compute_metrics,
     )
@@ -271,7 +319,11 @@ def train():
     print("🎉 训练完成！")
     print("="*60)
 
-    # 打印验证集结果
+    # 用完整验证集进行最终评估
+    print("\n📊 使用完整验证集进行最终评估...")
+    import torch
+    torch.cuda.empty_cache()  # 清理显存后再评估
+    trainer.eval_dataset = full_val_dataset
     eval_results = trainer.evaluate()
     print(f"\n📊 验证集最终评估结果:")
     for k, v in eval_results.items():

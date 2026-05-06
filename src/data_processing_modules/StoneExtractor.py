@@ -1,15 +1,16 @@
 """
-StoneExtractor: 使用 Grounding DINO + SAM2 提取石头主体区域，去除背景干扰。
+StoneExtractor: 使用 SAM2.1 提取石头主体区域，去除背景干扰。
 
 功能：
-1. 使用 Grounding DINO 检测石头区域
-2. 使用 SAM2 生成精确分割掩码
-3. 裁剪石头主体并填充背景
-4. 批量处理数据集图片
+1. 使用 SAM2.1 large model 以图像中心点为 prompt 进行分割
+2. 根据分割掩码边界裁剪石头主体
+3. 输出裁剪后的图片，大小为分割区域大小
+4. 不改变图像分辨率
+5. 仅对未增强的 train_images 和 test_images 进行处理
 
-依赖安装：
-    pip install transformers torch pillow numpy tqdm
-    pip install sam-2  # 或从源码安装：pip install -e . (SAM2 仓库)
+依赖：
+    - sam2 (从 /root/Projects/sam2 安装)
+    - torch, pillow, numpy, tqdm
 """
 
 import os
@@ -19,12 +20,15 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 
-# 添加项目根目录到路径，确保导入正确
+# 添加项目根目录到路径
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.join(script_dir, "..", "..")
 sys.path.insert(0, project_root)
+
+# 常量路径
+SAM2_ROOT = "/root/Projects/sam2"
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,58 +37,42 @@ logger = logging.getLogger(__name__)
 
 class StoneExtractor:
     """
-    使用 Grounding DINO + SAM2 提取石头主体区域，去除背景干扰。
+    使用 SAM2.1 提取石头主体区域。
 
     工作流程：
-    1. Grounding DINO 检测石头/岩石区域，返回边界框
-    2. SAM2 根据边界框生成精确的分割掩码
-    3. 使用掩码去除背景，填充为统一颜色
-    4. 裁剪石头主体区域并保存
+    1. 使用图像中心点作为 SAM2 的 prompt
+    2. SAM2 生成分割掩码
+    3. 根据掩码边界裁剪石头主体区域
+    4. 输出裁剪后的图片（大小为分割区域大小，不改变分辨率）
     """
 
     def __init__(
         self,
-        dino_model: Optional[torch.nn.Module] = None,
-        dino_processor: Optional[object] = None,
-        sam2_predictor: Optional[object] = None,
+        sam2_predictor: Optional[Any] = None,
         device: str = "cuda",
         background_value: int = 128,
-        default_padding: int = 20,
         save_quality: int = 95,
-        dino_box_threshold: float = 0.35,
-        dino_text_threshold: float = 0.25,
+        padding: int = 10,
     ):
         """
         Args:
-            dino_model: Grounding DINO 模型
-            dino_processor: Grounding DINO 处理器 (transformers 格式)
             sam2_predictor: SAM2 图像预测器
             device: 计算设备
-            background_value: 背景填充值 (0-255)，128 为中性灰色
-            default_padding: 裁剪时的额外边距 (像素)
-            save_quality: JPEG 保存质量 (1-100)
-            dino_box_threshold: DINO 检测框置信度阈值
-            dino_text_threshold: DINO 文本相似度阈值
+            background_value: 背景填充灰度值 (0-255)
+            save_quality: JPEG 保存质量
+            padding: 裁剪边距 (像素)
         """
-        self.dino_model = dino_model
-        self.dino_processor = dino_processor
         self.sam2_predictor = sam2_predictor
         self.device = device
         self.background_value = background_value
-        self.default_padding = default_padding
         self.save_quality = save_quality
-        self.dino_box_threshold = dino_box_threshold
-        self.dino_text_threshold = dino_text_threshold
-
-        if dino_model is not None:
-            self.dino_model.to(device).eval()
+        self.padding = padding
 
     @classmethod
     def from_pretrained(
         cls,
-        dino_model_name: str = "IDEA-Research/grounding-dino-base",
-        sam2_model_cfg: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
-        sam2_checkpoint: str = "checkpoints/sam2.1_hiera_large.pt",
+        sam2_checkpoint: str = os.path.join(SAM2_ROOT, "checkpoints/sam2.1_hiera_large.pt"),
+        sam2_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
         device: str = "cuda",
         **kwargs,
     ):
@@ -92,212 +80,129 @@ class StoneExtractor:
         从预训练模型加载 StoneExtractor
 
         Args:
-            dino_model_name: Grounding DINO 模型名称或本地路径
-            sam2_model_cfg: SAM2 模型配置文件路径
-            sam2_checkpoint: SAM2 模型权重文件路径
+            sam2_checkpoint: SAM2.1 large 权重路径
+            sam2_config: SAM2.1 large 配置路径
             device: 计算设备
         """
-        logger.info(f"Loading Grounding DINO from {dino_model_name}...")
-        dino_model = None
-        dino_processor = None
+        logger.info("=" * 50)
+        logger.info("加载 SAM2.1 large 模型...")
 
-        try:
-            from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
-            dino_processor = AutoProcessor.from_pretrained(dino_model_name)
-            dino_model = AutoModelForZeroShotObjectDetection.from_pretrained(
-                dino_model_name,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            )
-            logger.info("Grounding DINO 加载成功")
-        except ImportError as e:
-            logger.warning(f"transformers 库未安装或模型加载失败：{e}")
-            logger.info("将继续加载 SAM2，但需要手动提供 DINO 模型或使用备用方案")
-        except Exception as e:
-            logger.warning(f"Grounding DINO 加载失败：{e}")
-
-        logger.info(f"Loading SAM2 from {sam2_checkpoint}...")
         sam2_predictor = None
 
         try:
-            # SAM2 导入 - 支持不同安装方式
-            try:
-                # 方式 1: pip 安装的 sam-2 包
-                from sam2.build_sam import build_sam2
-                from sam2.sam2_image_predictor import SAM2ImagePredictor
-            except ImportError:
-                # 方式 2: 从源码安装的 sam2 包
-                from sam2.build_sam import build_sam2
-                from sam2.sam2_image_predictor import SAM2ImagePredictor
+            from sam2.build_sam import build_sam2
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-            sam2_model = build_sam2(sam2_model_cfg, sam2_checkpoint, device=device)
+            logger.info(f"Checkpoint: {sam2_checkpoint}")
+            logger.info(f"Config: {sam2_config}")
+
+            # 切换到 sam2 目录加载配置
+            original_dir = os.getcwd()
+            os.chdir(SAM2_ROOT)
+
+            sam2_model = build_sam2(sam2_config, sam2_checkpoint, device=device)
             sam2_predictor = SAM2ImagePredictor(sam2_model)
-            logger.info("SAM2 加载成功")
-        except ImportError as e:
-            logger.warning(f"SAM2 库未安装或加载失败：{e}")
-            logger.info("请安装 SAM2: pip install -e . (从 SAM2 仓库) 或 pip install sam-2")
+
+            os.chdir(original_dir)
+            logger.info("SAM2.1 large 加载成功")
+
         except Exception as e:
-            logger.warning(f"SAM2 加载失败：{e}")
+            logger.error(f"SAM2 加载失败: {e}")
+            raise
+
+        logger.info("=" * 50)
 
         return cls(
-            dino_model=dino_model,
-            dino_processor=dino_processor,
             sam2_predictor=sam2_predictor,
             device=device,
             **kwargs,
         )
 
-    def _get_dino_bbox(
+    def _get_center_point_mask(
         self,
-        image_pil: Image.Image,
-        prompt: str = "rock or stone"
-    ) -> Optional[List[float]]:
-        """
-        使用 Grounding DINO 检测目标物体
-
-        Args:
-            image_pil: PIL Image 对象
-            prompt: 文本提示，用于检测的目标
-
-        Returns:
-            边界框 [x1, y1, x2, y2] 或 None
-        """
-        if self.dino_model is None or self.dino_processor is None:
-            logger.warning("DINO 模型未加载，无法检测边界框")
-            return None
-
-        try:
-            # 准备输入
-            inputs = self.dino_processor(
-                images=image_pil,
-                text=prompt,
-                return_tensors="pt"
-            ).to(self.device)
-
-            # 推理
-            with torch.no_grad():
-                outputs = self.dino_model(**inputs)
-
-            # 后处理
-            results = self.dino_processor.post_process_grounded_object_detection(
-                outputs,
-                inputs.input_ids,
-                box_threshold=self.dino_box_threshold,
-                text_threshold=self.dino_text_threshold,
-                target_sizes=[image_pil.size[::-1]]  # [height, width]
-            )
-
-            # 提取最高置信度的框
-            if results and len(results[0]["boxes"]) > 0:
-                boxes = results[0]["boxes"][0]  # [x1, y1, x2, y2]
-                scores = results[0]["scores"][0]
-                logger.debug(f"DINO 检测到目标：box={boxes}, score={scores:.3f}")
-                return boxes.tolist()
-            else:
-                logger.debug("DINO 未检测到目标")
-                return None
-
-        except Exception as e:
-            logger.warning(f"DINO 检测失败：{e}")
-            return None
-
-    def _get_sam2_mask(
-        self,
-        image_np: np.ndarray,
-        bbox: List[float]
+        image_np: np.ndarray
     ) -> np.ndarray:
         """
-        使用 SAM2 生成分割掩码
+        使用 SAM2 以图像中心点为 prompt 生成分割掩码
 
         Args:
             image_np: numpy 图像数组 (H, W, 3)
-            bbox: 边界框 [x1, y1, x2, y2]
 
         Returns:
-            bool 类型的掩码数组 (H, W)
-        """
-        if self.sam2_predictor is None:
-            logger.warning("SAM2 预测器未加载，使用边界框作为掩码")
-            # 备用方案：直接用边界框作为掩码
-            h, w = image_np.shape[:2]
-            x1, y1, x2, y2 = map(int, bbox)
-            mask = np.zeros((h, w), dtype=bool)
-            mask[y1:y2, x1:x2] = True
-            return mask
-
-        try:
-            # 设置图像
-            self.sam2_predictor.set_image(image_np)
-
-            # 使用边界框提示进行预测
-            mask, score, _ = self.sam2_predictor.predict(
-                box=np.array(bbox),
-                multimask_output=False
-            )
-
-            # SAM2 返回的是 (H, W) 的 bool 数组或 (1, H, W)
-            if mask.ndim == 3:
-                mask = mask[0]
-
-            logger.debug(f"SAM2 掩码生成成功，得分：{score:.3f}")
-            return mask.astype(bool)
-
-        except Exception as e:
-            logger.warning(f"SAM2 掩码生成失败：{e}")
-            # 备用方案：直接用边界框作为掩码
-            h, w = image_np.shape[:2]
-            x1, y1, x2, y2 = map(int, bbox)
-            mask = np.zeros((h, w), dtype=bool)
-            mask[y1:y2, x1:x2] = True
-            return mask
-
-    def _get_center_bbox(self, image_pil: Image.Image) -> List[float]:
-        """
-        获取图像中心区域的边界框（备用方案）
-
-        当 DINO 检测失败时，使用图像中心 80% 区域作为默认框
-        """
-        w, h = image_pil.size
-        margin_x = int(w * 0.1)
-        margin_y = int(h * 0.1)
-        return [margin_x, margin_y, w - margin_x, h - margin_y]
-
-    def _crop_stone(
-        self,
-        image_np: np.ndarray,
-        bbox: List[float],
-        padding: int
-    ) -> Image.Image:
-        """
-        根据边界框裁剪石头区域
-
-        Args:
-            image_np: numpy 图像数组
-            bbox: 边界框 [x1, y1, x2, y2]
-            padding: 额外边距
-
-        Returns:
-            裁剪后的 PIL Image
+            bool 掩码数组 (H, W)
         """
         h, w = image_np.shape[:2]
-        x1, y1, x2, y2 = map(int, bbox)
 
-        # 加入边距并确保在图像范围内
+        # 使用图像中心点作为 prompt
+        center_x = w // 2
+        center_y = h // 2
+
+        logger.debug(f"中心点 prompt: ({center_x}, {center_y})")
+
+        # 设置图像
+        self.sam2_predictor.set_image(image_np)
+
+        # 使用中心点进行分割
+        masks, scores, _ = self.sam2_predictor.predict(
+            point_coords=np.array([[center_x, center_y]]),
+            point_labels=np.array([1]),  # 1 表示前景
+            multimask_output=True
+        )
+
+        # 选择得分最高的掩码
+        best_idx = scores.argmax()
+        best_mask = masks[best_idx].astype(bool)
+        best_score = scores[best_idx]
+
+        logger.debug(f"SAM2 掩码得分: {scores.tolist()}, 最佳: {best_score:.3f}")
+
+        return best_mask
+
+    def _get_mask_bbox(
+        self,
+        mask: np.ndarray,
+        padding: int = 0
+    ) -> Tuple[int, int, int, int]:
+        """
+        从掩码获取边界框
+
+        Args:
+            mask: bool 掩码数组 (H, W)
+            padding: 边距
+
+        Returns:
+            (x1, y1, x2, y2)
+        """
+        h, w = mask.shape
+
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
+
+        y_indices = np.where(rows)[0]
+        x_indices = np.where(cols)[0]
+
+        if len(y_indices) == 0 or len(x_indices) == 0:
+            # 没有有效掩码，返回整图
+            return (0, 0, w, h)
+
+        y1, y2 = y_indices[0], y_indices[-1] + 1
+        x1, x2 = x_indices[0], x_indices[-1] + 1
+
+        # 添加边距
         x1 = max(0, x1 - padding)
         y1 = max(0, y1 - padding)
         x2 = min(w, x2 + padding)
         y2 = min(h, y2 + padding)
 
-        # 检查裁剪区域有效性
-        if x2 <= x1 or y2 <= y1:
-            logger.warning(f"无效的裁剪区域：[{x1},{y1},{x2},{y2}]，返回原图")
-            return Image.fromarray(image_np)
+        return (int(x1), int(y1), int(x2), int(y2))
 
-        cropped = image_np[y1:y2, x1:x2]
-        return Image.fromarray(cropped)
-
-    def process_and_save(self, image_path: str, output_path: str) -> bool:
+    def process_image(
+        self,
+        image_path: str,
+        output_path: str
+    ) -> bool:
         """
-        处理单张图片并保存结果
+        处理单张图片：分割、裁剪
 
         Args:
             image_path: 输入图片路径
@@ -310,37 +215,36 @@ class StoneExtractor:
             # 读取图像
             image_pil = Image.open(image_path).convert("RGB")
             image_np = np.array(image_pil)
+            w, h = image_pil.size
 
-            # 可选：如果图片顶部有文字标注，先裁剪掉顶部区域
-            # 检测图片高度，如果很高可能包含标尺等
-            h, w = image_np.shape[:2]
-            # 如果图片上方有超过 10% 的空白或文字区域，可以裁剪
-            # 这里暂时不处理，依赖 SAM2 的分割能力
+            # Step 1: 使用 SAM2 以中心点为 prompt 生成分割掩码
+            mask = self._get_center_point_mask(image_np)
 
-            # Step 1: 使用 DINO 检测石头区域
-            bbox = self._get_dino_bbox(image_pil, prompt="rock or stone or meteorite")
+            # Step 2: 获取掩码边界
+            bbox = self._get_mask_bbox(mask, padding=self.padding)
+            x1, y1, x2, y2 = bbox
 
-            if bbox is None:
-                logger.debug(f"DINO 检测失败，使用中心区域作为备用：{image_path}")
-                bbox = self._get_center_bbox(image_pil)
+            # 检查裁剪区域有效性
+            if x2 <= x1 or y2 <= y1:
+                logger.warning(f"无效裁剪区域: [{x1},{y1},{x2},{y2}]，返回原图")
+                image_pil.save(output_path, quality=self.save_quality)
+                return True
 
-            # Step 2: 使用 SAM2 生成分割掩码
-            mask = self._get_sam2_mask(image_np, bbox)
+            # Step 3: 裁剪掩码区域（不改变分辨率）
+            cropped_np = image_np[y1:y2, x1:x2]
+            mask_cropped = mask[y1:y2, x1:x2]
 
-            # Step 3: 使用掩码去除背景，填充为灰色
-            if image_np.ndim == 3:
-                # RGB 图像
-                image_np[~mask] = self.background_value
+            # Step 4: 将背景填充为灰色
+            if cropped_np.ndim == 3:
+                cropped_np[~mask_cropped] = self.background_value
             else:
-                # 灰度图像
-                image_np[~mask] = self.background_value
-
-            # Step 4: 裁剪石头主体
-            result_img = self._crop_stone(image_np, bbox, padding=self.default_padding)
+                cropped_np[~mask_cropped] = self.background_value
 
             # Step 5: 保存结果
+            result_img = Image.fromarray(cropped_np)
             result_img.save(output_path, quality=self.save_quality)
-            logger.debug(f"处理成功：{image_path} -> {output_path}")
+
+            logger.debug(f"处理成功: {image_path} -> {output_path} (裁剪: {x2-x1}x{y2-y1})")
             return True
 
         except Exception as e:
@@ -362,7 +266,7 @@ class StoneExtractor:
             skip_existing: 是否跳过已存在的文件
 
         Returns:
-            (成功数量，失败数量)
+            (成功数量, 失败数量)
         """
         os.makedirs(output_dir, exist_ok=True)
         success_cnt = 0
@@ -377,7 +281,7 @@ class StoneExtractor:
                 success_cnt += 1
                 continue
 
-            if self.process_and_save(path, out_path):
+            if self.process_image(path, out_path):
                 success_cnt += 1
             else:
                 fail_cnt += 1
@@ -388,21 +292,82 @@ class StoneExtractor:
 
         return success_cnt, fail_cnt
 
+    def process_dataset(
+        self,
+        data_root: str,
+        process_train: bool = True,
+        process_test: bool = True,
+        skip_existing: bool = True
+    ) -> Dict[str, Tuple[int, int]]:
+        """
+        处理完整数据集（仅未增强的数据）
+
+        Args:
+            data_root: 数据根目录
+            process_train: 是否处理 train_images
+            process_test: 是否处理 test_images
+            skip_existing: 是否跳过已存在的文件
+
+        Returns:
+            {'train': (success, fail), 'test': (success, fail)}
+        """
+        results = {}
+
+        # 处理 train_images
+        if process_train:
+            train_input = os.path.join(data_root, "train_images")
+            train_output = os.path.join(data_root, "train_images_extracted")
+
+            if os.path.exists(train_input):
+                logger.info(f"\n处理训练图片: {train_input}")
+
+                image_paths = [
+                    os.path.join(train_input, f)
+                    for f in os.listdir(train_input)
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                ]
+
+                logger.info(f"找到 {len(image_paths)} 张训练图片")
+                results['train'] = self.process_batch(
+                    image_paths, train_output, skip_existing
+                )
+            else:
+                logger.warning(f"训练图片目录不存在: {train_input}")
+                results['train'] = (0, 0)
+
+        # 处理 test_images
+        if process_test:
+            test_input = os.path.join(data_root, "test_images")
+            test_output = os.path.join(data_root, "test_images_extracted")
+
+            if os.path.exists(test_input):
+                logger.info(f"\n处理测试图片: {test_input}")
+
+                image_paths = [
+                    os.path.join(test_input, f)
+                    for f in os.listdir(test_input)
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                ]
+
+                logger.info(f"找到 {len(image_paths)} 张测试图片")
+                results['test'] = self.process_batch(
+                    image_paths, test_output, skip_existing
+                )
+            else:
+                logger.warning(f"测试图片目录不存在: {test_input}")
+                results['test'] = (0, 0)
+
+        return results
+
     def release(self):
         """释放模型资源"""
-        if self.dino_model is not None:
-            self.dino_model.to("cpu")
-            del self.dino_model
-            self.dino_model = None
-            logger.info("DINO 模型已释放到 CPU")
-
         if self.sam2_predictor is not None:
             if hasattr(self.sam2_predictor, "model"):
                 self.sam2_predictor.model.to("cpu")
                 del self.sam2_predictor.model
             del self.sam2_predictor
             self.sam2_predictor = None
-            logger.info("SAM2 模型已释放到 CPU")
+            logger.info("SAM2 模型已释放")
 
         torch.cuda.empty_cache()
         logger.info("显存已清理")
@@ -410,88 +375,65 @@ class StoneExtractor:
 
 def main():
     """
-    主函数：批量处理训练图片
+    主函数：处理未增强的 train_images 和 test_images
     """
     print("=" * 60)
-    print("🪨 StoneExtractor - 石头主体提取工具")
+    print("StoneExtractor - 石头主体提取工具 (SAM2.1)")
     print("=" * 60)
 
-    # 配置路径
+    # 数据根目录
     data_root = os.path.join(project_root, "data")
-
-    # 输入输出目录
-    input_image_dir = os.path.join(data_root, "train_images")
-    output_dir = os.path.join(data_root, "train_images_cleaned")
-
-    # 检查输入目录
-    if not os.path.exists(input_image_dir):
-        print(f"❌ 输入目录不存在：{input_image_dir}")
-        return
-
-    # 获取所有图片
-    image_extensions = ('.jpg', '.jpeg', '.png', '.webp')
-    image_paths = [
-        os.path.join(input_image_dir, f)
-        for f in os.listdir(input_image_dir)
-        if f.lower().endswith(image_extensions)
-    ]
-
-    print(f"\n📂 找到 {len(image_paths)} 张图片待处理")
-    print(f"📁 输入目录：{input_image_dir}")
-    print(f"📁 输出目录：{output_dir}")
 
     # 设备检查
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"\n💻 使用设备：{device}")
+    print(f"\n使用设备: {device}")
     if device == "cuda":
-        print(f"   GPU: {torch.cuda.get_device_name(0)}")
-        print(f"   显存：{torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"显存: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
 
     # 加载模型
-    print("\n🔧 加载模型...")
+    print("\n加载 SAM2.1 large 模型...")
     try:
         extractor = StoneExtractor.from_pretrained(
-            dino_model_name="IDEA-Research/grounding-dino-base",
-            sam2_model_cfg="configs/sam2.1/sam2.1_hiera_l.yaml",
-            sam2_checkpoint="checkpoints/sam2.1_hiera_large.pt",
+            sam2_checkpoint=os.path.join(SAM2_ROOT, "checkpoints/sam2.1_hiera_large.pt"),
+            sam2_config="configs/sam2.1/sam2.1_hiera_l.yaml",
             device=device,
             background_value=128,
-            default_padding=20,
             save_quality=95,
+            padding=10,
         )
     except Exception as e:
-        print(f"❌ 模型加载失败：{e}")
-        print("请确保已安装必要的依赖:")
-        print("   pip install transformers torch pillow numpy tqdm")
-        print("   pip install -e . (从 SAM2 仓库)")
+        print(f"模型加载失败: {e}")
+        print("请确保已安装 SAM2: pip install -e . (从 /root/Projects/sam2)")
         return
 
-    # 检查模型加载状态
-    if extractor.dino_model is None:
-        print("⚠️  DINO 模型未加载，将使用备用方案")
-    if extractor.sam2_predictor is None:
-        print("⚠️  SAM2 未加载，将使用边界框裁剪")
-
-    # 批量处理
-    print("\n🚀 开始处理图片...")
-    success, fail = extractor.process_batch(
-        image_paths=image_paths,
-        output_dir=output_dir,
-        skip_existing=True,
+    # 处理数据集
+    print("\n开始处理数据集...")
+    results = extractor.process_dataset(
+        data_root=data_root,
+        process_train=True,
+        process_test=True,
+        skip_existing=True
     )
 
     # 输出结果
     print("\n" + "=" * 60)
-    print(f"✅ 处理完成!")
-    print(f"   成功：{success} 张")
-    print(f"   失败：{fail} 张")
-    print(f"   输出目录：{output_dir}")
+    print("处理完成!")
     print("=" * 60)
 
+    for name, (success, fail) in results.items():
+        total = success + fail
+        print(f"{name}: 成功 {success}/{total} 张, 失败 {fail} 张")
+
+    # 输出目录
+    print(f"\n输出目录:")
+    print(f"  训练图片: {os.path.join(data_root, 'train_images_extracted')}")
+    print(f"  测试图片: {os.path.join(data_root, 'test_images_extracted')}")
+
     # 释放资源
-    print("\n🔄 释放模型资源...")
+    print("\n释放模型资源...")
     extractor.release()
-    print("👋 再见!")
+    print("完成!")
 
 
 if __name__ == "__main__":

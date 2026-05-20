@@ -11,7 +11,7 @@ def load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite/final_ada
     print(f"当前脚本目录: {BASE_DIR}")
     DATA_ROOT = os.path.join(BASE_DIR, "../../data")
     print(f"数据根目录: {DATA_ROOT}")
-    IMAGE_INPUT = os.path.join(DATA_ROOT, "test_images")
+    IMAGE_INPUT = os.path.join(DATA_ROOT, "test_images_extracted")
     MODEL_INPUT = os.path.join(BASE_DIR, "../../models")
     print(f"模型输入目录: {MODEL_INPUT}")
     base_model_id = os.path.join(MODEL_INPUT, "Qwen3-VL-8B-Instruct")  # 原始模型路径
@@ -58,7 +58,7 @@ def load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite/final_ada
         image.thumbnail((720, 720), Image.Resampling.LANCZOS)  # 与训练时相同尺寸
 
         # 5. 构造指令（与训练时相同的模板）
-        instruction = "请观察这张图片的纹理特征，判断其中是否有陨石？回答时首先给出“是”或“否”，然后简要说明理由。"
+        instruction = "请观察这张图片，它有80%可能为非陨石（或不是石头），有20%概率为陨石。请你判断它是否为陨石？回答\"是\"或\"否\"。然后简要给出理由。"
 
         # 6. 生成回答
         # 按照 Qwen3-VL 官方推荐，使用 apply_chat_template 构建对话
@@ -146,7 +146,8 @@ def predict(model, processor, test_loader, device):
     """
     model.eval()
     id_to_pred = {}
-    instruction = "请观察这张图片的纹理特征，判断其中是否有陨石？回答时首先给出“是”或“否”，然后简要说明理由。"
+    # instruction = "请观察这张图片，判断它是否为陨石？回答\"是\"或\"否\"。"
+    instruction = "请观察这张图片，它有80%可能为非陨石（或不是石头），有20%概率为陨石。请你判断它是否为陨石？回答\"是\"或\"否\"。" # 这种给定先验概率的提示词效果更好
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Predicting"):
@@ -201,4 +202,4 @@ def predict(model, processor, test_loader, device):
 
 
 if __name__ == "__main__":
-    load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite_20260504_123315/final_adapter_20260504_123315")
+    load_model_and_quick_test(lora_model_name="qwen3-vl-lora-meteorite_20260506_211417_biased_training/final_adapter_20260506_211417")

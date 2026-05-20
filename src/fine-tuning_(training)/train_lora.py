@@ -125,7 +125,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT = os.path.join(BASE_DIR, "../../data")
 MODEL_ROOT = os.path.join(BASE_DIR, "../../models")
 MODEL_ID = os.path.join(MODEL_ROOT, "Qwen3-VL-8B-Instruct")
-DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_simple.jsonl")  # 简化output版本
+# DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_resampled.jsonl")  # 简化output版本
+DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_resampled_without_extracted.jsonl")  # 简化output版本
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_DIR = os.path.join(MODEL_ROOT, f"qwen3-vl-lora-meteorite_{TIMESTAMP}")
 
@@ -165,7 +166,7 @@ def train():
     print("\n🔧 配置 LoRA...")
     lora_config = LoraConfig(
         r=64,  # 简化output，降低rank防止过拟合
-        lora_alpha=128,
+        lora_alpha=32,
         target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.1,
         bias="none",
@@ -207,8 +208,18 @@ def train():
     class QwenVLDataCollator:
         def __init__(self, processor):
             self.processor = processor
+            # Qwen3-VL 的 assistant 起始 tokens: <|im_start|>assistant\n
+            # 编码后是 [151644, 77091, 198] 三个 tokens
+            self.assistant_start_tokens = processor.tokenizer.encode(
+                "<|im_start|>assistant\n", add_special_tokens=False
+            )
+            # <|im_end|> token id
+            self.im_end_id = processor.tokenizer.encode("<|im_end|>", add_special_tokens=False)[0]
 
         def __call__(self, examples):
+            # 在 worker 进程中需要重新导入 torch
+            import torch
+
             images = []
             for ex in examples:
                 try:
@@ -238,11 +249,37 @@ def train():
             if missing:
                 raise KeyError(f"Missing keys: {missing}")
 
-            labels = batch["input_ids"].clone()
-            pad_token_id = self.processor.tokenizer.pad_token_id
-            labels[labels == pad_token_id] = -100
-            batch["labels"] = labels
+            # 正确构建 labels：只计算 assistant 回复部分的 loss
+            input_ids = batch["input_ids"]
+            attention_mask = batch["attention_mask"]
+            labels = []
 
+            for i in range(len(input_ids)):
+                seq = input_ids[i].tolist()
+                labels_i = input_ids[i].clone()
+
+                # 查找 assistant 起始位置: <|im_start|>assistant\n
+                # 即查找 self.assistant_start_tokens 的连续序列
+                assistant_start_pos = -1
+                for j in range(len(seq) - len(self.assistant_start_tokens) + 1):
+                    if seq[j:j + len(self.assistant_start_tokens)] == self.assistant_start_tokens:
+                        assistant_start_pos = j + len(self.assistant_start_tokens)
+                        break
+
+                if assistant_start_pos != -1:
+                    # Mask掉 user 部分（包括 assistant 起始标记本身）
+                    # 只保留 assistant 实际回复内容参与 loss 计算
+                    labels_i[:assistant_start_pos] = -100
+                    # Mask掉 padding tokens
+                    labels_i[attention_mask[i] == 0] = -100
+                else:
+                    # 未找到 assistant 起始位置，安全处理：全部 mask
+                    print(f"⚠️ 未找到 assistant 起始位置，样本 {i} 将被跳过")
+                    labels_i[:] = -100
+
+                labels.append(labels_i)
+
+            batch["labels"] = torch.stack(labels)
             return batch
 
     # ================= 6. 训练参数 =================
@@ -259,6 +296,11 @@ def train():
     print(f"   有效 batch size: {effective_batch_size}")
     print(f"   每 epoch 步数：{steps_per_epoch}")
     print(f"   评估间隔：每 {eval_steps} 步 (约 0.1 个 epoch)")
+
+    # TensorBoard 日志目录（固定目录，方便 TensorBoard 监控）
+    TENSORBOARD_LOG_DIR = os.path.join(DATA_ROOT, "logs", "tensorboard")
+    os.makedirs(TENSORBOARD_LOG_DIR, exist_ok=True)
+    print(f"   TensorBoard 日志目录: {TENSORBOARD_LOG_DIR}")
 
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
@@ -288,6 +330,9 @@ def train():
         load_best_model_at_end=True,        # 训练结束时加载最佳模型
         metric_for_best_model="eval_loss",  # 以验证集 loss 为标准
         greater_is_better=False,            # loss 越小越好
+        # TensorBoard 配置
+        logging_dir=TENSORBOARD_LOG_DIR,    # TensorBoard 日志目录
+        report_to="tensorboard",            # 启用 TensorBoard 报告
     )
     print("✅ 训练参数配置完成")
     print(f"   有效 batch size: {training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps}")

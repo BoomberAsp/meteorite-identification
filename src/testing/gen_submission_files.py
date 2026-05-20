@@ -44,12 +44,13 @@ def make_submission(id_to_pred, template_csv_path, output_path):
 
 if __name__ == "__main__":
     # 加载模型和处理器
-    model, processor, device = test_model.load_model(lora_model_name="qwen3-vl-lora-meteorite_20260504_151245/final_adapter_20260504_151245")
+    model, processor, device = test_model.load_model(lora_model_name="qwen3-vl-lora-meteorite_20260507_005818/final_adapter_20260507_005818")
 
     # 准备测试数据加载器
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_ROOT = os.path.join(BASE_DIR, "../../data")
-    TEST_DATA_DIR = os.path.join(DATA_ROOT, "test_images_extracted")
+    # TEST_DATA_DIR = os.path.join(DATA_ROOT, "test_images_extracted")
+    TEST_DATA_DIR = os.path.join(DATA_ROOT, "test_images")
     dataset = TestImageDataset(TEST_DATA_DIR)
     batch_size = 4   # 根据显存调整，建议 2 或 4
     test_loader = DataLoader(
@@ -66,7 +67,7 @@ if __name__ == "__main__":
     # 生成提交文件
     OUTPUT_DIR = os.path.join(DATA_ROOT, "logs")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    submission_path = os.path.join(OUTPUT_DIR, "submission_extracted_05042109.csv")
+    submission_path = os.path.join(OUTPUT_DIR, "submission_05071028_biased_training.csv")
     template_path = os.path.join(DATA_ROOT, "sample_submission.csv")
     make_submission(id_to_pred, template_path, submission_path)
     print(f"Kaggle submission file saved to {submission_path}")

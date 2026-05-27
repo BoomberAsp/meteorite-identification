@@ -180,8 +180,8 @@ def main():
     data_root = os.path.join(project_root, "data")
 
     # 输入输出
-    input_image_dir = os.path.join(data_root, "train_images")
-    output_dir = os.path.join(data_root, "train_images_augmented")
+    input_image_dir = os.path.join(data_root, "train_images_extracted")
+    output_dir = os.path.join(data_root, "train_images_extracted_augmented")
 
     # 设备检查
     device = "cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu"

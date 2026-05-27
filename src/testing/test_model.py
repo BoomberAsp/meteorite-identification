@@ -147,7 +147,7 @@ def predict(model, processor, test_loader, device):
     model.eval()
     id_to_pred = {}
     # instruction = "请观察这张图片，判断它是否为陨石？回答\"是\"或\"否\"。"
-    instruction = "请观察这张图片，它有80%可能为非陨石（或不是石头），有20%概率为陨石。请你判断它是否为陨石？回答\"是\"或\"否\"。" # 这种给定先验概率的提示词效果更好
+    instruction = "请观察这张图片，它有60%可能为非陨石（或不是石头），有40%概率为陨石。请你判断它是否为陨石？回答\"是\"或\"否\"。" # 这种给定先验概率的提示词效果更好
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Predicting"):

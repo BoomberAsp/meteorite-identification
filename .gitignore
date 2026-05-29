@@ -11,3 +11,4 @@ data/*
 !data/train_labels.csv
 data.zip
 test/*
+nohup.out

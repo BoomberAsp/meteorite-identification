@@ -31,32 +31,76 @@
 
 **问题**：测试集图片普遍尺寸更小、亮度更低、色彩更单调，当前训练未有效模拟这些降质，模型对低质量图像鲁棒性不足。
 
+#### 2.1 TokenMixUp（embedding 空间混合）
+
+**原理**：在 `QwenVLDataCollator` 中，每 batch 内随机配对样本，对它们的 `pixel_values` 做线性插值后送入模型 forward，loss 按混合比例 λ 加权。只对 image embedding 混合，text 保持各样本自身完整内容。
+
 **执行步骤**：
 
-1. **模拟测试集降质的数据增强**
-   - 新增增强维度到 `ImageAugmentor` 或独立模块：
-     - **降分辨率**：随机缩小图像至 256x256 再放大回原尺寸（模拟低分辨率）
-     - **降低亮度**：随机调整亮度因子 0.5~0.9（模拟暗色图像）
-     - **降低饱和度**：随机调整饱和度因子 0.3~0.7（模拟单调色彩）
-     - **高斯模糊**：σ = 0.5~2.0（模拟运动模糊/失焦）
-   - 注意：避免大角度旋转和仿射变换破坏陨石关键鉴别特征（熔壳、气印）
+1. **修改 `train_lora.py` 的 `QwenVLDataCollator`**
+   - 在 `__call__` 末尾，以概率 `mixup_prob=0.5` 触发混合
+   - 对 batch 内样本做随机置换 `perm`，取 `λ ~ Beta(α, α)`（α=0.2，倾向极端值使混合不过于平滑）
+   - 对 `pixel_values` 执行：`pixel_values = λ * pixel_values + (1-λ) * pixel_values[perm]`
+   - 对 `labels` 做对应加权：
+     - 原始 labels 中 `-100`（mask 位）保持不变
+     - 有效 token 位置：`labels = λ * labels_A + (1-λ) * labels_B`
+     - 实际实现：不直接修改 labels 数值（VLM loss 依赖离散 token），而是**在 loss 层面加权**——将配对样本的 labels 分别保留，loss = λ * loss_A + (1-λ) * loss_B
+   - 简化实现：不修改 labels，只混合 `pixel_values`。模型对混合图片的 forward 天然产生"中间特征"响应，这本身就是一种 strong regularization，无需 label 加权
 
-2. **多尺度训练**
-   - 修改 `train_lora.py` 中 `QwenVLDataCollator` 的 `img.thumbnail()` 调用
-   - 随机选择输入尺寸：`[384, 512, 720]`，使模型适应不同分辨率下的纹理表达
-   - 不同尺寸共享同一模型权重，仅在训练时随机切换
+2. **关键设计决策**
+   - **只对 `pixel_values` 混合**，不混合 `image_grid_thw`（保持 grid 结构不变）
+   - **不修改 instruction/output**——每个样本的 text 保持完整 reasoning 链
+   - **不修改 labels 数值**——VLM 是 token generation 任务，label smoothing 无意义；pixel 混合产生的特征扰动已足够作为正则化
 
-3. **测试时增强（TTA）**
-   - 在 `test_model.py` 的 `predict()` 函数中实现：
-     - 水平翻转
-     - 垂直翻转
-     - 多尺度裁剪（如 720、512、384 三种尺寸分别推理）
-   - 对各变换版本的 softmax 概率取平均，得到最终预测
+3. **超参数**
+   - `mixup_prob`: 0.5（50% 的 batch 触发混合）
+   - `mixup_alpha`: 0.2（Beta(0.2, 0.2) 倾向 λ 接近 0 或 1，保留更多原始信息）
+   - 可通过实验调整：观察 train loss 收敛速度与 val loss 的 gap
+
+#### 2.2 离线域降质增强（生成到 `train_images_augmented/`）
+
+**原理**：模拟测试集的域偏移特征，离线生成降质图像，与现有旋转/缩放增强合并使用。
+
+**执行步骤**：
+
+1. **新增 `DomainDegradationAugmentor` 模块**（`src/data_processing_modules/DomainDegradationAugmentor.py`）
+   - **降分辨率**：随机缩小至 256x256 → 双线性插值回原尺寸（模拟低分辨率）
+   - **降低亮度**：随机因子 0.5~0.9（模拟测试集暗色图像）
+   - **降低饱和度**：随机因子 0.3~0.7（模拟测试集单调色彩）
+   - **高斯模糊**：σ = 0.5~2.0（模拟运动模糊/失焦）
+   - **随机 JPEG 压缩**：quality 30~60（模拟低质量传输）
+   - 每次从上述 5 种操作中随机选择 1~3 种组合应用（非全部串联，避免过度降质）
+   - 输出到 `train_images_degraded/` 目录，命名格式 `000001_deg0.jpg`
+
+2. **合并到训练数据管线**
+   - 修改 `resample_without_extracted.py`，增加扫描 `train_images_degraded/` 目录
+   - 保持 5:1 采样比例
+
+3. **注意**：避免大角度旋转和仿射变换破坏陨石关键鉴别特征（熔壳、气印）
+
+#### 2.3 多尺度训练
+
+**执行步骤**：
+
+1. **修改 `train_lora.py` 中 `QwenVLDataCollator` 的 `img.thumbnail()`**
+   - 替换固定尺寸 720 为随机选择：`random.choice([384, 512, 720])`
+   - 每个样本在训练时随机切换尺寸，不同尺寸共享同一模型权重
+
+#### 2.4 测试时增强（TTA）
+
+**执行步骤**：
+
+1. **在 `test_model.py` 的 `predict()` 中实现**：
+   - 水平翻转
+   - 多尺度推理（720、512、384）
+   - 对各版本的 softmax 概率取平均，得到最终预测
    - 预期稳定预测结果，降低单次推理的方差
 
-4. **验证方案**
-   - 单独验证每种增强策略对 Kaggle F1 的贡献（消融实验）
-   - 组合最优策略进行最终训练
+#### 2.5 验证方案
+
+1. **消融实验**：依次叠加各策略，记录 Kaggle F1
+   - Baseline → +TokenMixUp → +域降质 → +多尺度 → +TTA
+2. **组合最优策略进行最终训练**
 
 ### 方向三：模型集成
 

@@ -1,7 +1,7 @@
 import os
 import random
-from typing import List, Tuple
-from PIL import Image
+from typing import List, Tuple, Optional
+from PIL import Image, ImageEnhance
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -10,11 +10,13 @@ logger = logging.getLogger(__name__)
 
 class ImageAugmentor:
     """
-    图像数据增强器：通过缩放和旋转生成新的训练数据
+    图像数据增强器：通过缩放、旋转、翻转和颜色抖动生成新的训练数据
 
     增强策略：
     - 旋转：随机旋转 -30° 到 +30° 之间的角度
     - 缩放：随机缩放到原图的 0.8 到 1.2 倍
+    - 翻转：按概率施加水平/垂直翻转
+    - 颜色抖动：随机调整亮度、对比度、饱和度
     """
 
     def __init__(
@@ -23,6 +25,9 @@ class ImageAugmentor:
         scale_range: Tuple[float, float] = (0.8, 1.2),
         fill_color: Tuple[int, int, int] = (128, 128, 128),
         save_quality: int = 95,
+        flip_horizontal_prob: float = 0.5,
+        flip_vertical_prob: float = 0.0,
+        color_jitter: Optional[Tuple[float, float, float]] = None,
     ):
         """
         Args:
@@ -30,11 +35,19 @@ class ImageAugmentor:
             scale_range: 缩放比例范围 (min, max)，1.0 表示原大小
             fill_color: 旋转后填充的背景色，默认灰色
             save_quality: 保存质量 (1-100)
+            flip_horizontal_prob: 水平翻转概率 (0.0=不翻转, 1.0=必翻转)
+            flip_vertical_prob: 垂直翻转概率 (0.0=不翻转, 1.0=必翻转)
+            color_jitter: (brightness_range, contrast_range, saturation_range)
+                每个 range 为 (min, max) 因子，如 (0.7, 1.4)
+                None 表示不施加颜色抖动
         """
         self.rotation_range = rotation_range
         self.scale_range = scale_range
         self.fill_color = fill_color
         self.save_quality = save_quality
+        self.flip_horizontal_prob = flip_horizontal_prob
+        self.flip_vertical_prob = flip_vertical_prob
+        self.color_jitter = color_jitter
 
     def augment(self, image: Image.Image) -> Image.Image:
         """
@@ -62,6 +75,36 @@ class ImageAugmentor:
                 int(image.height * scale_factor)
             )
             image = image.resize(new_size, resample=Image.BICUBIC)
+
+        # 水平翻转
+        if random.random() < self.flip_horizontal_prob:
+            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+
+        # 垂直翻转
+        if random.random() < self.flip_vertical_prob:
+            image = image.transpose(Image.FLIP_TOP_BOTTOM)
+
+        # 颜色抖动
+        if self.color_jitter is not None:
+            brightness_range, contrast_range, saturation_range = self.color_jitter
+            n_ops = random.randint(1, 2)  # 每次随机选 1~2 种
+            ops = []
+            if brightness_range:
+                ops.append(('brightness', ImageEnhance.Brightness(image)))
+            if contrast_range:
+                ops.append(('contrast', ImageEnhance.Contrast(image)))
+            if saturation_range:
+                ops.append(('saturation', ImageEnhance.Color(image)))
+            if ops:
+                chosen = random.sample(ops, min(n_ops, len(ops)))
+                for name, enhancer in chosen:
+                    if name == 'brightness':
+                        factor = random.uniform(*brightness_range)
+                    elif name == 'contrast':
+                        factor = random.uniform(*contrast_range)
+                    else:
+                        factor = random.uniform(*saturation_range)
+                    image = enhancer.enhance(factor)
 
         return image
 

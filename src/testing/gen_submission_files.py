@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # 生成提交文件
     OUTPUT_DIR = os.path.join(DATA_ROOT, "logs")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    submission_path = os.path.join(OUTPUT_DIR, "submission_05071028_biased_training.csv")
+    submission_path = os.path.join(OUTPUT_DIR, "submission_05271719_biased_training.csv")
     template_path = os.path.join(DATA_ROOT, "sample_submission.csv")
     make_submission(id_to_pred, template_path, submission_path)
     print(f"Kaggle submission file saved to {submission_path}")

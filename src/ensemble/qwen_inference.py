@@ -26,6 +26,12 @@ from transformers import (
 from peft import PeftModel
 
 
+DEFAULT_INSTRUCTION = (
+    "请观察这张图片，它有60%可能为非陨石（或不是石头），有40%概率为陨石。"
+    "请你判断它是否为陨石？回答\"是\"或\"否\"。"
+)
+
+
 def load_model_and_processor(base_model_id, adapter_path, device="cuda"):
     """Load Qwen3-VL with LoRA adapter, return (model, processor)."""
     bnb_config = BitsAndBytesConfig(
@@ -109,15 +115,13 @@ class TestImageDataset(Dataset):
         return filename, image
 
 
-def run_inference(model, processor, image_dir, device, threshold=0.5):
+def run_inference(model, processor, image_dir, device, threshold=0.5, instruction=DEFAULT_INSTRUCTION):
     """
     Run inference on all test images, return (filenames, probabilities, labels).
     """
     dataset = TestImageDataset(image_dir)
     filenames_all = []
     probs_all = []
-
-    instruction = "请观察这张图片，它有80%可能为非陨石（或不是石头），有20%概率为陨石。请你判断它是否为陨石？回答\"是\"或\"否\"。然后简要给出理由。"
 
     for i in tqdm(range(len(dataset)), desc="Qwen inference"):
         filename, image = dataset[i]
@@ -139,6 +143,8 @@ def main():
     parser.add_argument("--output_dir", required=True, help="Output directory")
     parser.add_argument("--model_name", default=None, help="Short name (default: from adapter dirname)")
     parser.add_argument("--threshold", type=float, default=0.5, help="Threshold for binary classification")
+    parser.add_argument("--instruction", default=DEFAULT_INSTRUCTION,
+                        help="Prompt used for Qwen inference. Default matches test_model.py's 60:40 prior prompt.")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -154,7 +160,12 @@ def main():
 
     image_dir = os.path.join(args.data_root, "test_images")
     print(f"Running inference on: {image_dir}")
-    filenames, probs, labels = run_inference(model, processor, image_dir, device, threshold=args.threshold)
+    print(f"Instruction: {args.instruction}")
+    filenames, probs, labels = run_inference(
+        model, processor, image_dir, device,
+        threshold=args.threshold,
+        instruction=args.instruction,
+    )
 
     # Save predictions
     df = pd.DataFrame({"id": filenames, "label": labels, "prob_m": probs})
@@ -167,6 +178,7 @@ def main():
         "base_model": args.base_model,
         "adapter": args.adapter,
         "timestamp": datetime.now().isoformat(),
+        "instruction": args.instruction,
         "num_test": len(filenames),
         "pred_pos_count": int(sum(labels)),
         "prob_mean": float(np.mean(probs)),

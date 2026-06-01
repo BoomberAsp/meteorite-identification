@@ -308,7 +308,7 @@ def train():
     DATA_ROOT = os.path.join(BASE_DIR, "../../data")
     MODEL_ROOT = os.path.join(BASE_DIR, "../../models")
     MODEL_ID = os.path.join(MODEL_ROOT, "Qwen3-VL-8B-Instruct")
-    DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_extracted_augmented.jsonl")
+    DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_baseline.jsonl")
     TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
     OUTPUT_DIR = os.path.join(MODEL_ROOT, f"qwen3-vl-lora-meteorite_{TIMESTAMP}")
     VAL_SPLIT_RATIO = 0.1

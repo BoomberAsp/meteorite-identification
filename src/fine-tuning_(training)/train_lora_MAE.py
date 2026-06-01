@@ -1,3 +1,15 @@
+"""
+train_lora_MAE.py
+
+MAE掩码预训练辅助训练脚本，集成以下自监督正则化方法：
+- MAE Masking: 对输入图像的patch进行高比例随机掩码（默认75%），迫使模型依赖局部线索重建全局语义
+- 重建损失辅助: 在VLM生成loss之外附加像素级重建loss，增强视觉编码器对细粒度纹理的表征能力
+- 仅作用于视觉编码器: 文本分支与LoRA参数不参与MAE任务，保持reasoning链完整性
+
+用于验证自监督预训练信号对陨石细粒度识别任务的增益，与train_lora_baseline.py及train_lora_augmented.py对照消融。
+注意：MAE属于语义/特征级正则化，不解决像素级域偏移（低光照/低分辨率/传感器差异），需与自适应亮度校正、频域扰动等像素级方法配合使用。
+"""
+
 import os
 import torch
 import torch.nn as nn

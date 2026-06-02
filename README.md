@@ -278,27 +278,30 @@ data/qwen3_sft_train_extracted_augmented.jsonl (完整增强训练数据)
 
 ### 全流程对比
 
-| 模型 | 训练数据                                       | 增强 | 数据量 | Confirmed 准确率 | 全部准确率 |
-|------|--------------------------------------------|------|--------|------|------|
-| Baseline (简单标注) | 原始图, 简单"是/否"                               | 旋转+缩放 | 8,562 | — | Kaggle F1=0.634 |
-| 答案在前格式 (队友) | Merged, 详细 reasoning                       | 无 | ~5K | — | Kaggle F1=0.751 |
-| **Aug-v1** | 白底提取图 + API 改写                             | TokenMixUp+多尺度+颜色抖动 | 15,294 | 70.1% | 68.0% |
-| Aug-v1 + Injection | + 98 共识样本                                  | 同上 | 15,555 | 70.1% | 68.0% |
-| Aug-v1 + Confirmed | + 87 精选样本                                  | 同上 | 15,555 | 73.6% | 69.6% |
-| **Curated (VC2)** | **精选: confirmed 261 + 验证 1529 + 训练抽样 500** | 同上 | **2,290** | **82.8%** | **76.8%** |
+| 模型                 | 训练数据                                       | 增强                           | 数据量       | 全部准确率                 |
+|--------------------|--------------------------------------------|------------------------------|-----------|-----------------------|
+| Baseline (简单标注)    | 原始图, 简单"是/否"                               | 旋转+缩放                        | 15924     | Kaggle F1=0.634       |
+| 答案在前格式             | 提取图 + 详细 reasoning                         | 无                            | 5098      | Kaggle F1=0.751       |
+|Visual-Text Co-Cropping| 提取图 + 详细 reasoning                         |Visual-Text Co-Cropping| 5098      | Kaggle F1=0.78        |
+| **Aug-v1**         | 白底提取图 + API 改写 reasoning                   | TokenMixUp+多尺度+颜色抖动          | 15,294    | Kaggle F1=0.778       |
+| Aug-v1 + Injection | + 98 共识样本                                  | 同上 + Visual-Text Co-Cropping | 15,588    | -                     | 
+| Aug-v1 + Confirmed | + 87 精选样本                                  | 同上                           | 15,555    | -                     |
+| **Best model**     | **精选: confirmed 261 + 验证 1529 + 训练抽样 500** | 同上                           | **2,290** | **Kaggle F1=0.82352** |
 
 ### 关键结论
 
-1. **答案在前 > 答案在后**（0.751 vs 0.562 Kaggle F1）
+1. **答案在前 > 答案在后**（0.634 vs 0.562 Kaggle F1）
 2. **详细 reasoning > 简单"是/否"**（0.751 vs 简单 0.634）
-3. **Domain injection 有效但需精选**：全量共识 injection 无效（0.683→0.683），但精选 confirmed 数据 + 验证集 + 训练抽样后从 68.0% → 76.8%（+8.8%）
+3. **Domain injection 有效但需精选**：全量共识 injection 有效（0.634→0.683），但精选 confirmed 数据 + 验证集 + 训练抽样后从 0.683 → 0.753
 4. **数据质量 > 数据数量**：2,290 条精选训练效果远超 15K 全量
-5. **TokenMixUp + 多尺度有效**但 gains 有限（Aug-v1 0.683 vs 基线 0.634，但大部分 gain 来自详细 reasoning 格式）
+5. **TokenMixUp + 多尺度有效**但 gains 有限（Aug-v1 0.778 vs 0.751）
+6. **Visual-Text Co-Cropping 有效** 0.751 → 0.78  
 
 ### 最新提交策略
 
-使用 Curated (VC2) 模型 + 详细 reasoning 提示词 + confirmed 标签覆盖：
+使用 基线 + 纯白背景填充 + 详细 reasoning 提示词 + 多尺度，颜色抖动 + 精选 confirmed Domain injection + Visual-Text Co-Cropping + TokenMixUp：
 - 预测分布：是 102 (55.7%) / 否 92 (44.3%)
+- F1-score: 0.82352
 
 
 ### Domain Injection 方法论

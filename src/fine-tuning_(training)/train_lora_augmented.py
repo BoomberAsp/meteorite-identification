@@ -4,7 +4,8 @@ train_lora_augmented.py
 增强版训练脚本，集成以下正则化方法：
 - TokenMixUp: batch 内随机配对，对 pixel_values 做线性插值
 - 多尺度训练: 随机选择 384/512/720 尺寸加载图像
-- 域降质数据: 从 qwen3_sft_train_resampled_aug.jsonl 读取（含离线降质增强）
+- 数据: qwen3_sft_train_extracted_augmented.jsonl
+  （白底 SAM2 提取图 + API 改写 reasoning，15,294 条）
 
 用于与 train_lora_baseline.py 的结果对照消融实验。
 """
@@ -102,14 +103,8 @@ DATA_ROOT = os.path.join(BASE_DIR, "../../data")
 MODEL_ROOT = os.path.join(BASE_DIR, "../../models")
 MODEL_ID = os.path.join(MODEL_ROOT, "Qwen3-VL-8B-Instruct")
 
-# 增强数据路径（含离线域降质）
-AUG_DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_resampled_aug.jsonl")
-# 如果增强数据不存在则 fallback 到基线数据
-if not os.path.exists(AUG_DATA_PATH):
-    DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_baseline.jsonl")
-    print("⚠️  未找到增强数据，使用基线数据")
-else:
-    DATA_PATH = AUG_DATA_PATH
+# 增强数据路径（白底提取图 + API 改写 reasoning）
+DATA_PATH = os.path.join(DATA_ROOT, "qwen3_sft_train_extracted_augmented.jsonl")
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_DIR = os.path.join(MODEL_ROOT, f"qwen3-vl-lora-meteorite_aug_{TIMESTAMP}")
@@ -235,11 +230,43 @@ def train():
             batch["labels"] = torch.stack(labels)
 
             # ===== TokenMixUp =====
+            # Qwen3-VL 的 pixel_values 是展平的 [total_tokens, dim]，不同图像的
+            # token 数由 image_grid_thw 决定。按 token 数分组，组内做随机配对混合。
             if self.is_training and np.random.random() < self.mixup_prob and len(examples) > 1:
-                perm = torch.randperm(len(examples))
+                grid_thw = batch["image_grid_thw"]
+                token_counts = (grid_thw[:, 1] * grid_thw[:, 2]).tolist()
+
+                # 构建每个样本在展平 tensor 中的起止索引
+                offsets = [0]
+                for c in token_counts:
+                    offsets.append(offsets[-1] + c)
+
                 lam = float(np.random.beta(self.mixup_alpha, self.mixup_alpha))
                 pv = batch["pixel_values"]
-                batch["pixel_values"] = lam * pv + (1 - lam) * pv[perm]
+
+                # 按 token 数分组
+                groups = {}
+                for i, tc in enumerate(token_counts):
+                    groups.setdefault(tc, []).append(i)
+
+                # 对每组（token 数相同的样本）做随机配对混合
+                mixed_segments = [None] * len(examples)
+                for tc, indices in groups.items():
+                    if len(indices) >= 2:
+                        perm = torch.randperm(len(indices)).tolist()
+                        for pos, idx in enumerate(indices):
+                            pair_idx = indices[perm[pos]]
+                            start_a, end_a = offsets[idx], offsets[idx + 1]
+                            start_b, end_b = offsets[pair_idx], offsets[pair_idx + 1]
+                            seg_a = pv[start_a:end_a]
+                            seg_b = pv[start_b:end_b]
+                            mixed_segments[idx] = lam * seg_a + (1 - lam) * seg_b
+                    else:
+                        # 组内只有 1 个样本，不混合
+                        idx = indices[0]
+                        mixed_segments[idx] = pv[offsets[idx]:offsets[idx + 1]]
+
+                batch["pixel_values"] = torch.cat(mixed_segments, dim=0)
 
             return batch
 
@@ -262,7 +289,7 @@ def train():
         per_device_train_batch_size=PER_DEVICE_BATCH,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION,
         learning_rate=1e-4,
-        num_train_epochs=3,
+        num_train_epochs=2,  # 详细 reasoning 信息量大，2 epoch 足够
         bf16=True,
         logging_steps=10,
         save_total_limit=3,

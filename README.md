@@ -11,11 +11,11 @@
 | 基座模型 | Qwen3-VL-8B-Instruct (8B 视觉语言模型) |
 | 微调方式 | QLoRA 4-bit (NF4, double quant, bfloat16) |
 | LoRA 配置 | r=64, alpha=32, dropout=0.1, 全层覆盖 |
-| 优化器 | AdamW, lr=1e-4, cosine 调度 + 10% warmup |
-| Batch size | 2 per device × 4 gradient accumulation = effective 8 |
-| 训练轮次 | 3 epochs |
-| 当前最佳 F1 | 0.812 (验证集) |
-| 数据规模 | 5,098 原始图 + 10,196 增强图 = 15,294 条 |
+| 优化器 | AdamW, lr=1e-4 (初始) / 5e-5 (继续微调), cosine 调度 |
+| Batch size | 2 × 4 gradient accumulation = effective 8 |
+| 训练轮次 | 1-3 epochs (数据量增加后减少) |
+| 最新模型 | Curated (VC2): Confirmed 82.8% / 全部 76.8% 准确率 |
+| 数据规模 | 2,290 条精选 (confirmed 261 + 验证 1,529 + 训练抽样 500) |
 
 ---
 
@@ -81,6 +81,11 @@ meteorite-identification/
     │   ├── train_lora.py                  # 原训练脚本
     │   ├── train_lora_baseline.py         # 基线训练（无增强，详细 reasoning）
     │   ├── train_lora_augmented.py        # 增强版训练（TokenMixUp + 多尺度）
+    │   ├── train_lora_injection.py        # Domain Injection 微调
+    │   ├── train_lora_confirmed.py        # Confirmed 数据微调
+    │   ├── train_lora_vc2.py             # 精选数据（confirmed+val+train500）微调
+    │   ├── train_lora-Visual-Text.py      # 队友的 Co-Cropping 训练脚本
+    │   ├── data_augmentation.py           # Visual-Text Co-Cropping 增强器
     │   ├── gen_SFT_data.py                # SFT 数据集生成
     │   └── downloading_model.py           # 模型下载
     │
@@ -269,51 +274,66 @@ data/qwen3_sft_train_extracted_augmented.jsonl (完整增强训练数据)
 
 ---
 
-## 消融实验计划
+## 模型演变与实验记录
 
-| 实验 | 策略 | F1 | 状态 |
-|------|------|-----|------|
-| Baseline | 简单标注, 无增强 | 0.812 | ✅ 完成 |
-| 答案在前格式 | 详细 reasoning, 答案在前 | 0.751 | ✅ 完成 |
-| 详细 reasoning, 答案在后 | 详细 reasoning, 答案在后 | 0.562 | ✅ 完成 |
-| + TokenMixUp | 答案在前 + TokenMixUp | | 待执行 |
-| + 颜色抖动 | 答案在前 + TokenMixUp + 颜色抖动 | | 待执行 |
-| + 多尺度 | 答案在前 + TokenMixUp + 颜色抖动 + 多尺度 | | 待执行 |
-| + TTA | 全量推理 | | 待执行 |
+### 全流程对比
+
+| 模型 | 训练数据 | 增强 | 数据量 | Confirmed 准确率 | 全部准确率 |
+|------|---------|------|--------|------|------|
+| Baseline (简单标注) | 原始图, 简单"是/否" | 旋转+缩放 | 8,562 | — | Kaggle F1=0.634 |
+| 答案在前格式 (队友) | Merged, 详细 reasoning | 无 | ~5K | — | Kaggle F1=0.751 |
+| **Aug-v1** | 白底提取图 + API 改写 | TokenMixUp+多尺度+颜色抖动 | 15,294 | 70.1% | 68.0% |
+| Aug-v1 + Injection | + 98 共识样本 | 同上 | 15,555 | 70.1% | 68.0% |
+| Aug-v1 + Confirmed | + 87 绝对正确样本 | 同上 | 15,555 | 73.6% | 69.6% |
+| **Curated (VC2)** | **精选: confirmed 261 + 验证 1529 + 训练抽样 500** | 同上 | **2,290** | **82.8%** | **76.8%** |
+
+### 关键结论
+
+1. **答案在前 > 答案在后**（0.751 vs 0.562 Kaggle F1）
+2. **详细 reasoning > 简单"是/否"**（队友 0.751 vs 简单 0.634）
+3. **Domain injection 有效但需精选**：全量共识 injection 无效（0.683→0.683），但精选 confirmed 数据 + 验证集 + 训练抽样后从 68.0% → 76.8%（+8.8%）
+4. **数据质量 > 数据数量**：2,290 条精选训练效果远超 15K 全量
+5. **TokenMixUp + 多尺度有效**但 gains 有限（Aug-v1 0.683 vs 基线 0.634，但大部分 gain 来自详细 reasoning 格式）
+
+### 最新提交策略
+
+使用 Curated (VC2) 模型 + 详细 reasoning 提示词 + confirmed 标签覆盖：
+- 预测分布：是 108 (55.7%) / 否 86 (44.3%)
+- 文件：`data/logs/submission_vc2_confirmed_overwrite.csv`
+
+### Domain Injection 方法论
+
+1. **人类标注共识筛选** — 多人标注 + 模型预测一致性
+2. **VLM 看图生成 reasoning** — 用 Qwen3-VL 观察图片特征写定制理由，不用纯文本 LLM
+3. **图像增强** — 旋转+翻转+颜色抖动 ×2
+4. **精选数据注入** — 少量高质量数据 > 大量低质量数据
 
 ---
 
-## 未来执行方案
+## 未来方向
 
-详见 `PLAN.md` 和 `implements.md`。
-
-### 四个方向
-
-1. **增强标注质量** — 引导模型学习陨石鉴别逻辑（熔壳、气印等）
-2. **面向域偏移的数据增强** — TokenMixUp + 多尺度 + 域降质 + TTA
-3. **优化目标区域提取** — 白底 SAM2 提取对齐测试集域
-4. **模型集成** — Qwen3-VL + ConvNeXt + Swin 异构集成
+1. **Visual-Text Co-Cropping** — 关键词驱动的图文对齐裁剪（队友已验证 0.75→0.78）
+2. **整理 confirmed 22 个顽固错误** — 模型极确定但人类标注相反，可能是极端难例
+3. **多模型集成** — 搭配 CNN (ConvNeXt/Swin) 做异构投票
+4. **指令对齐** — 解决简单提示词 vs 详细提示词的输出分布偏移问题
 
 ---
 
 ## 常见问题
 
-### Q: 如何调整先验概率提示词？
-
-修改 `gen_submission_baseline.py` 中的 `INSTRUCTION` 变量：
-
-```python
-INSTRUCTION = (
-    "请观察这张图片...它有70%的概率不是陨石，30%的概率是陨石..."
-)
-```
-
-### Q: 如何使用 API 改写 reasoning？
+### Q: 如何用最新模型预测？
 
 ```bash
-export DEEPSEEK_API_KEY='sk-xxx'
-python src/data_processing_modules/api_rewrite_for_augmented.py -m deepseek-v4-pro -w 8
+# Curated (VC2) 模型 + 详细推理提示词 + confirmed 覆盖
+python3 -c "..."  # 见 src/testing/gen_submission_aug.py
 ```
+
+### Q: 如何构建 Domain Injection 数据？
+
+1. 人类标注共识筛选（多人标注 + 模型共识）
+2. VLM 看图生成 reasoning（`vlm_label_consensus.py`）
+3. 图像增强（旋转+翻转+颜色抖动 ×2）
+4. 精选注入（少而精 > 大而全）
 
 ### Q: 训练显存不足怎么办？
 
@@ -327,5 +347,5 @@ python src/data_processing_modules/api_rewrite_for_augmented.py -m deepseek-v4-p
 
 ```bash
 python src/data_processing_modules/check_extract_quality.py
-# 手动检查 data/extract_quality_report/suspicious_files.txt
+# data/extract_quality_report/suspicious_files.txt 列出需替换的文件
 ```

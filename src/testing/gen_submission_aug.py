@@ -25,7 +25,7 @@ MODEL_ROOT = os.path.join(PROJECT_ROOT, "models")
 DATA_ROOT = os.path.join(PROJECT_ROOT, "data")
 
 CHECKPOINT_PATH = os.path.join(
-    MODEL_ROOT, "qwen3-vl-lora-meteorite_aug_20260531_222433", "checkpoint-3442")
+    MODEL_ROOT, "qwen3-vl-lora-meteorite_vc2_20260602_180603", "checkpoint-516")
 BASE_MODEL_ID = os.path.join(MODEL_ROOT, "Qwen3-VL-8B-Instruct")
 TEST_DIR = os.path.join(DATA_ROOT, "test_images-v2")
 TEMPLATE_CSV = os.path.join(DATA_ROOT, "sample_submission_v2.csv")

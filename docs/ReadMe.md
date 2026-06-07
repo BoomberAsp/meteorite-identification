@@ -458,7 +458,7 @@ def compute_metrics(eval_pred) -> Dict[str, float]
 
 ```python
 # 从 ModelScope 下载基座模型
-model_path = snapshot_download('qwen/Qwen3-VL-8B-Instruct', local_dir='models/Qwen3-VL-8B-Instruct')
+model_path = snapshot_download('qwen/Qwen3-VL-8B-Instruct', local_dir='../models/Qwen3-VL-8B-Instruct')
 ```
 
 ---

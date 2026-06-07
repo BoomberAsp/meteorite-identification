@@ -6,17 +6,17 @@
 
 ## 项目概述
 
-| 项目 | 值                                               |
-|------|-------------------------------------------------|
-| 基座模型 | Qwen3-VL-8B-Instruct (8B 视觉语言模型)                |
-| 微调方式 | QLoRA 4-bit (NF4, double quant, bfloat16)       |
-| LoRA 配置 | r=64, alpha=32, dropout=0.1, 全层覆盖               |
-| 优化器 | AdamW, lr=1e-4 (初始) / 5e-5 (继续微调), cosine 调度    |
-| Batch size | 2 × 4 gradient accumulation = effective 8       |
-| 训练轮次 | 1-3 epochs (数据量增加后减少)                           |
-| 最佳 F1 | **0.84454** (all194fit + 详细推理 prompt) |
-| 最终提交 F1 | 0.82352 (Curated/VC2 + confirmed 覆盖) |
-| 训练数据 | 582 条 (194 测试集 + 388 增强, VLM reasoning) |
+| 项目 | 值                                            |
+|------|----------------------------------------------|
+| 基座模型 | Qwen3-VL-8B-Instruct (8B 视觉语言模型)             |
+| 微调方式 | QLoRA 4-bit (NF4, double quant, bfloat16)    |
+| LoRA 配置 | r=64, alpha=32, dropout=0.1, 全层覆盖            |
+| 优化器 | AdamW, lr=1e-4 (初始) / 5e-5 (继续微调), cosine 调度 |
+| Batch size | 2 × 4 gradient accumulation = effective 8    |
+| 训练轮次 | 1-3 epochs (数据量增加后减少)                        |
+| 最佳 F1 | **0.84454** (详细推理 prompt)                    |
+| 最终提交 F1 | **0.82352** (Curated/VC2)                    |
+| 训练数据 | 15876 条 (VLM reasoning)    |
 
 ---
 
@@ -25,7 +25,6 @@
 ```
 meteorite-identification/
 ├── README.md                              # 本文档
-├── REPORT.md                              # 完整实验报告（最终版）
 ├── experiments.md                         # 实验记录
 ├── PLAN.md                                # 初始执行方案（参考）
 │
@@ -303,15 +302,15 @@ data/qwen3_sft_train_extracted_augmented.jsonl (完整增强训练数据)
 
 ### 全流程对比
 
-| 模型                 | 训练数据                                       | 增强                           | 数据量       | 全部准确率                 |
-|--------------------|--------------------------------------------|------------------------------|-----------|-----------------------|
-| Baseline (简单标注)    | 原始图, 简单"是/否"                               | 旋转+缩放                        | 15924     | Kaggle F1=0.634       |
-| 答案在前格式             | 提取图 + 详细 reasoning                         | 无                            | 5098      | Kaggle F1=0.751       |
-|Visual-Text Co-Cropping| 提取图 + 详细 reasoning                         |Visual-Text Co-Cropping| 5098      | Kaggle F1=0.78        |
-| **Aug-v1**         | 白底提取图 + API 改写 reasoning                   | TokenMixUp+多尺度+颜色抖动          | 15,294    | Kaggle F1=0.773       |
-| Aug-v1 + Injection | + 98 共识样本                                  | 同上 + Visual-Text Co-Cropping | 15,588    | -                     | 
-| Aug-v1 + Confirmed | + 87 精选样本                                  | 同上                           | 15,555    | -                     |
-| **Best model**     | **精选: confirmed 261 + 验证 1529 + 训练抽样 500** | 同上                           | **2,290** | **Kaggle F1=0.82352** |
+| 模型                      | 训练数据                                       | 增强                           | 数据量       | 全部准确率                 |
+|-------------------------|--------------------------------------------|------------------------------|-----------|-----------------------|
+| Baseline (简单标注)         | 原始图, 简单"是/否"                               | 旋转+缩放                        | 15924     | Kaggle F1=0.634       |
+| 答案在前格式                  | 提取图 + 详细 reasoning                         | 无                            | 5098      | Kaggle F1=0.751       |
+| Visual-Text Co-Cropping | 提取图 + 详细 reasoning                         |Visual-Text Co-Cropping| 5098      | Kaggle F1=0.78        |
+| **Aug-v1**              | 白底提取图 + API 改写 reasoning                   | TokenMixUp+多尺度+颜色抖动          | 15,294    | Kaggle F1=0.773       |
+| Aug-v1 + Injection      | + 98 共识样本                                  | 同上 + Visual-Text Co-Cropping | 15,588    | -                     | 
+| Aug-v1 + Confirmed      | + 87 精选样本                                  | 同上                           | 15,555    | -                     |
+| **Selected model**             | **精选: confirmed 261 + 验证 1529 + 训练抽样 500** | 同上                           | **2,290** | **Kaggle F1=0.82352** |
 
 ### 关键结论
 
@@ -340,31 +339,94 @@ data/qwen3_sft_train_extracted_augmented.jsonl (完整增强训练数据)
 
 ## 常见问题
 
-### Q: 如何用最新模型预测？
+### Q: 如何用最佳模型复现提交文件？
 
-```bash
-# Curated (VC2) 模型 + 详细推理提示词
-python3 -c "..."  # 见 src/testing/gen_submission_aug.py
+**所需文件**：
+- 基座模型：`models/Qwen3-VL-8B-Instruct`
+- LoRA 权重：`你克隆仓库的adapter位置`
+- 测试图片：`data/test_images-v2/`（194 张）
+- 提交模板：`data/sample_submission_v2.csv`
+
+**关键参数**：
+- 提示词：完整推理格式（与训练一致）
+- 判定方式：首 token "是"/"否" logits softmax 概率（不依赖 generate 文本解析）
+- 不进行任何人类标注覆盖
+
+**复制以下脚本即可生成完全一致的提交文件**：
+
+```python
+import os, torch, pandas as pd
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
+from peft import PeftModel
+
+BASE = 'models/Qwen3-VL-8B-Instruct'
+CKPT = '你克隆仓库的adapter位置'
+TEST = 'data/test_images-v2'
+
+# 提示词
+INSTRUCTION = (
+    "请观察这张图片中石头的视觉特征（颜色、纹理、形状），"
+    "判断其中是否有陨石？注意：忽略图片中的所有文字、标签、标尺等信息，"
+    "仅根据石头本身的外观特征判断。"
+    "回答时首先给出\"是\"或\"否\"，然后简要说明理由。"
+)
+
+# 加载模型
+bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_use_double_quant=True,
+                          bnb_4bit_quant_type='nf4', bnb_4bit_compute_dtype=torch.bfloat16)
+base = AutoModelForImageTextToText.from_pretrained(BASE, quantization_config=bnb,
+                                                    device_map='auto', trust_remote_code=True)
+model = PeftModel.from_pretrained(base, CKPT).eval()
+processor = AutoProcessor.from_pretrained(BASE, trust_remote_code=True)
+processor.tokenizer.padding_side = 'left'
+yes_id = processor.tokenizer.encode('是', add_special_tokens=False)[0]
+no_id  = processor.tokenizer.encode('否', add_special_tokens=False)[0]
+
+class TestDataset(Dataset):
+    def __init__(self, d):
+        self.f = sorted([f for f in os.listdir(d) if f.lower().endswith(('.jpg','.jpeg','.png','.webp'))])
+        self.d = d
+    def __len__(self): return len(self.f)
+    def __getitem__(self, i):
+        fn = self.f[i]
+        return fn, Image.open(os.path.join(self.d, fn)).convert('RGB')
+
+loader = DataLoader(TestDataset(TEST), batch_size=4, shuffle=False, collate_fn=lambda b: b)
+preds = {}
+
+with torch.no_grad():
+    for fns, imgs in loader:
+        imgs = [img.copy() for img in imgs]
+        for img in imgs: img.thumbnail((720, 720), Image.Resampling.LANCZOS)
+        msgs = [{'role': 'user', 'content': [{'type': 'image', 'image': None}, {'type': 'text', 'text': INSTRUCTION}]}]
+        texts = [processor.apply_chat_template(
+            msgs, tokenize=False, add_generation_prompt=True) for _ in imgs]
+        inputs = processor(text=texts, images=imgs, return_tensors='pt', padding=True).to('cuda')
+        outputs = model(**inputs)
+        logits = outputs.logits[:, inputs['input_ids'].shape[1] - 1, :]
+        yes_logit = logits[:, yes_id]; no_logit = logits[:, no_id]
+        yes_prob = torch.softmax(torch.stack([yes_logit, no_logit], dim=1), dim=1)[:, 0]
+        for fn, yp in zip(fns, yes_prob.cpu().numpy()):
+            preds[fn] = 1 if yp > 0.5 else 0
+
+ids = pd.read_csv('data/sample_submission_v2.csv')
+ids['label'] = ids['id'].map(preds).fillna(0).astype(int)
+ids.to_csv('submission.csv', index=False)
+print(f'Done: 是={(ids.label==1).sum()}, 否={(ids.label==0).sum()}')
 ```
 
-### Q: 如何构建 Domain Injection 数据？
+**预期输出**：101 个"是"、93 个"否"。
 
-1. 人类标注共识筛选（多人标注 + 模型共识）
-2. VLM 看图生成 reasoning（`vlm_label_consensus.py`）
-3. 图像增强（旋转+翻转+颜色抖动 ×2）
-4. 精选注入（少而精 > 大而全）
+### Q: 预测需要什么硬件？
+
+- 至少 24GB 显存（RTX 4090 或更高），推荐 48GB（L20）
+- 模型使用 4-bit 量化，显存占用约 14GB
 
 ### Q: 训练显存不足怎么办？
 
 - 减小 `per_device_train_batch_size`（当前为 2）
 - 增加 `gradient_accumulation_steps` 保持有效 batch size
-- 减少 `EVAL_SUBSET_SIZE`（当前为 100）
+- 关闭 `gradient_checkpointing` 可提速但显存加倍
 
-### Q: SAM2 提取失败如何处理？
-
-运行质量检查并替换失败图像为原图：
-
-```bash
-python src/data_processing_modules/check_extract_quality.py
-# data/extract_quality_report/suspicious_files.txt 列出需替换的文件
-```

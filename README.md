@@ -342,7 +342,7 @@ data/qwen3_sft_train_extracted_augmented.jsonl (完整增强训练数据)
 ### Q: 如何用最佳模型复现提交文件？
 
 **所需文件**：
-- 基座模型：`models/Qwen3-VL-8B-Instruct`
+- 基座模型：`models/Qwen3-VL-8B-Instruct` 可从<https://www.modelscope.cn/models/Qwen/Qwen3-VL-8B-Instruct>下载
 - LoRA 权重：`你克隆仓库的adapter位置` 可从<https://www.modelscope.cn/models/feng3142/Meteorite-Qwen>下载
 - 测试图片：`data/test_images-v2/`（194 张）
 - 提交模板：`data/sample_submission_v2.csv`

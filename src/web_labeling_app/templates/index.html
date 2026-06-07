@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>☄ 陨石标注工具</title>
+<style>
+/* ── Reset & Base ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --meteorite: #22c55e;
+  --meteorite-bg: #dcfce7;
+  --non-meteorite: #ef4444;
+  --non-meteorite-bg: #fee2e2;
+  --unlabeled: #9ca3af;
+  --unlabeled-bg: #f3f4f6;
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --text: #1f2937;
+  --text-secondary: #6b7280;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  box-shadow: var(--shadow);
+  z-index: 10;
+  gap: 16px;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.header h1 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.header h1 .icon { font-size: 1.4rem; }
+
+/* Dataset switch tabs */
+.dataset-tabs {
+  display: flex;
+  gap: 0;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.dataset-tab {
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  background: var(--surface);
+  color: var(--text-secondary);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.dataset-tab:hover { background: #f3f4f6; }
+.dataset-tab.active {
+  background: #3b82f6;
+  color: white;
+}
+.dataset-tab + .dataset-tab {
+  border-left: 2px solid var(--border);
+}
+.dataset-badge {
+  font-size: 0.7rem;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+.progress-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.progress-bar-wrap {
+  width: 150px;
+  height: 7px;
+  background: var(--unlabeled-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--meteorite), #16a34a);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.stat-meteorite { color: var(--meteorite); font-weight: 600; }
+.stat-non { color: var(--non-meteorite); font-weight: 600; }
+
+/* ── Main Layout ──────────────────────────────────────────────── */
+.main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Left Panel ───────────────────────────────────────────────── */
+.left-panel {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  outline: none;
+}
+.btn:focus-visible { box-shadow: 0 0 0 3px rgba(59,130,246,.4); }
+
+.btn-nav {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+  width: 100%;
+}
+.btn-nav:hover { background: #f9fafb; border-color: #d1d5db; }
+.btn-nav:active { background: #f3f4f6; }
+
+.btn-meteorite {
+  background: var(--meteorite-bg);
+  border-color: var(--meteorite);
+  color: #15803d;
+  width: 100%;
+  font-size: 0.95rem;
+  padding: 12px;
+}
+.btn-meteorite:hover { background: #bbf7d0; }
+.btn-meteorite:active { background: #86efac; }
+
+.btn-non-meteorite {
+  background: var(--non-meteorite-bg);
+  border-color: var(--non-meteorite);
+  color: #b91c1c;
+  width: 100%;
+  font-size: 0.95rem;
+  padding: 12px;
+}
+.btn-non-meteorite:hover { background: #fecaca; }
+.btn-non-meteorite:active { background: #fca5a5; }
+
+.btn-clear {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-secondary);
+  width: 100%;
+}
+.btn-clear:hover { background: #f9fafb; }
+
+.btn-export {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+  width: 100%;
+  margin-top: auto;
+}
+.btn-export:hover { background: #2563eb; border-color: #2563eb; }
+
+.separator {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2px 0;
+}
+
+.jump-group {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.jump-group label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.jump-input {
+  flex: 1;
+  padding: 7px 8px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  text-align: center;
+  outline: none;
+  min-width: 0;
+}
+.jump-input:focus { border-color: #3b82f6; }
+.btn-jump {
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+.btn-jump:hover { background: #f3f4f6; }
+
+/* ── Center (Image) ───────────────────────────────────────────── */
+.center-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: #1a1a2e;
+  min-width: 0;
+  position: relative;
+}
+
+.image-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#current-image {
+  max-width: 100%;
+  max-height: 75vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.4);
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.image-nav-overlay {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.12);
+  border: none;
+  color: white;
+  font-size: 1.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  z-index: 5;
+  backdrop-filter: blur(4px);
+}
+.image-nav-overlay:hover { background: rgba(255,255,255,.3); }
+.image-nav-overlay.prev { left: 12px; }
+.image-nav-overlay.next { right: 12px; }
+
+.click-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  cursor: pointer;
+  z-index: 4;
+}
+.click-zone.left { left: 0; }
+.click-zone.right { right: 0; }
+
+/* ── Right Panel ──────────────────────────────────────────────── */
+.right-panel {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.info-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.info-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.info-value {
+  font-size: 0.88rem;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.label-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.label-status.meteorite {
+  background: var(--meteorite-bg);
+  color: #15803d;
+}
+.label-status.non-meteorite {
+  background: var(--non-meteorite-bg);
+  color: #b91c1c;
+}
+.label-status.unlabeled {
+  background: var(--unlabeled-bg);
+  color: var(--text-secondary);
+}
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.meteorite { background: var(--meteorite); }
+.status-dot.non-meteorite { background: var(--non-meteorite); }
+.status-dot.unlabeled { background: var(--unlabeled); }
+
+/* Reasoning box for training set */
+.reasoning-box {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius);
+  padding: 10px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #92400e;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.reasoning-box .reasoning-title {
+  font-weight: 700;
+  font-size: 0.75rem;
+  margin-bottom: 4px;
+  color: #a16207;
+}
+.reasoning-box .original-label-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.original-label-badge.meteorite { background: var(--meteorite-bg); color: #15803d; }
+.original-label-badge.non-meteorite { background: var(--non-meteorite-bg); color: #b91c1c; }
+
+.human-override-indicator {
+  font-size: 0.7rem;
+  font-style: italic;
+  color: #7c3aed;
+  margin-top: 2px;
+}
+
+.shortcuts-box {
+  background: #f9fafb;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 0.72rem;
+  line-height: 1.8;
+}
+.shortcuts-box kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--surface);
+  border: 1px solid #d1d5db;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  min-width: 16px;
+  text-align: center;
+}
+
+/* ── Thumbnail Strip (bottom) ─────────────────────────────────── */
+.thumbnail-strip-wrap {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px 14px;
+}
+.thumbnail-strip {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 3px 0;
+  scroll-behavior: smooth;
+}
+.thumbnail-strip::-webkit-scrollbar { height: 5px; }
+.thumbnail-strip::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+.thumbnail-strip::-webkit-scrollbar-track { background: transparent; }
+
+.thumb-item {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 5px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 3px solid var(--unlabeled);
+  transition: border-color 0.2s, transform 0.15s;
+  position: relative;
+  background: #e5e7eb;
+}
+.thumb-item:hover { transform: scale(1.1); }
+.thumb-item.active { border-color: #3b82f6 !important; box-shadow: 0 0 0 2px rgba(59,130,246,.3); }
+.thumb-item.labeled-1 { border-color: var(--meteorite); }
+.thumb-item.labeled-0 { border-color: var(--non-meteorite); }
+
+.thumb-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.thumb-index {
+  position: absolute;
+  bottom: 1px;
+  right: 3px;
+  font-size: 0.5rem;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0,0,0,.7);
+  font-weight: 600;
+}
+
+/* ── Toast notification ───────────────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 24px;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  z-index: 9999;
+  animation: toastIn 0.3s ease, toastOut 0.3s ease 1.5s forwards;
+  pointer-events: none;
+}
+.toast.success { background: #22c55e; }
+.toast.info { background: #3b82f6; }
+.toast.error { background: #ef4444; }
+
+@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-20px); } }
+@keyframes toastOut { to { opacity: 0; transform: translateX(-50%) translateY(-20px); } }
+
+/* ── Loading state ────────────────────────────────────────────── */
+.loading {
+  color: white;
+  font-size: 1.2rem;
+  opacity: 0.7;
+}
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 1000px) {
+  .left-panel { width: 180px; padding: 10px; }
+  .right-panel { width: 200px; padding: 10px; }
+  .header { flex-wrap: wrap; }
+}
+@media (max-width: 750px) {
+  .main { flex-direction: column; }
+  .left-panel, .right-panel { width: 100%; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .center-panel { order: -1; min-height: 40vh; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────── -->
+<div class="header">
+  <div class="header-left">
+    <h1><span class="icon">☄</span>陨石标注工具</h1>
+    <div class="dataset-tabs" id="dataset-tabs">
+      <button class="dataset-tab active" data-dataset="test">
+        📋 测试集 <span class="dataset-badge">194</span>
+      </button>
+      <button class="dataset-tab" data-dataset="training">
+        📚 训练集 <span class="dataset-badge">5,098</span>
+      </button>
+    </div>
+  </div>
+  <div class="progress-summary">
+    <span>已标注: <strong id="header-count">0</strong> / <span id="header-total">0</span></span>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+    </div>
+    <span id="header-pct">0%</span>
+    <span class="stat-meteorite">☄ <span id="header-m">0</span></span>
+    <span class="stat-non">🪨 <span id="header-n">0</span></span>
+  </div>
+</div>
+
+<!-- ── Main Content ────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Left Panel: Controls -->
+  <div class="left-panel">
+    <button class="btn btn-nav" id="btn-prev" title="上一张 (← / A)">◀ &nbsp;上一张</button>
+    <button class="btn btn-nav" id="btn-next" title="下一张 (→ / D)">▶ &nbsp;下一张</button>
+
+    <hr class="separator">
+
+    <button class="btn btn-meteorite" id="btn-meteorite" title="标注为陨石 (M)">
+      ☄ &nbsp;陨石
+    </button>
+    <button class="btn btn-non-meteorite" id="btn-non" title="标注为非陨石 (N)">
+      🪨 &nbsp;非陨石
+    </button>
+    <button class="btn btn-clear" id="btn-clear" title="取消标注 (U)">
+      ✕ &nbsp;取消标注
+    </button>
+
+    <hr class="separator">
+
+    <div class="jump-group">
+      <label for="jump-input">跳转:</label>
+      <input type="number" class="jump-input" id="jump-input" min="1" placeholder="编号" title="输入图片编号跳转">
+      <button class="btn-jump" id="btn-jump">Go</button>
+    </div>
+
+    <button class="btn btn-export" id="btn-export" title="导出CSV文件">
+      📥 &nbsp;导出 CSV
+    </button>
+  </div>
+
+  <!-- Center Panel: Image Display -->
+  <div class="center-panel" id="center-panel">
+    <div class="image-container" id="image-container">
+      <div class="loading" id="image-loading">加载中…</div>
+      <img id="current-image" src="" alt="陨石图像" style="display:none">
+      <div class="click-zone left" id="click-left" title="点击左侧切换上一张"></div>
+      <div class="click-zone right" id="click-right" title="点击右侧切换下一张"></div>
+      <button class="image-nav-overlay prev" id="overlay-prev" title="上一张">◀</button>
+      <button class="image-nav-overlay next" id="overlay-next" title="下一张">▶</button>
+    </div>
+  </div>
+
+  <!-- Right Panel: Info -->
+  <div class="right-panel">
+    <div class="info-block">
+      <span class="info-label">📋 数据集</span>
+      <span class="info-value" id="info-dataset">测试集</span>
+    </div>
+
+    <div class="info-block">
+      <span class="info-label">📄 文件</span>
+      <span class="info-value" id="info-filename">—</span>
+    </div>
+
+    <!-- Human label status -->
+    <div class="info-block">
+      <span class="info-label" id="label-section-title">标注状态</span>
+      <div class="label-status unlabeled" id="label-status">
+        <span class="status-dot unlabeled" id="status-dot"></span>
+        <span id="status-text">未标注</span>
+      </div>
+      <span class="human-override-indicator" id="override-indicator" style="display:none"></span>
+    </div>
+
+    <!-- Training set: original label + reasoning -->
+    <div class="info-block" id="training-info-block" style="display:none">
+      <span class="info-label">🤖 原始标注 (JSONL)</span>
+      <div class="reasoning-box" id="reasoning-box">
+        <div class="original-label-badge unlabeled" id="original-label-badge">—</div>
+        <div class="reasoning-title">📝 推理理由:</div>
+        <div id="reasoning-text" style="white-space:pre-wrap;">—</div>
+      </div>
+    </div>
+
+    <hr class="separator" style="margin:0">
+
+    <div class="info-block">
+      <span class="info-label">⌨ 快捷键</span>
+      <div class="shortcuts-box">
+        <kbd>←</kbd> <kbd>→</kbd> 导航<br>
+        <kbd>M</kbd> 标为陨石<br>
+        <kbd>N</kbd> 标为非陨石<br>
+        <kbd>U</kbd> 取消标注<br>
+        <kbd>A</kbd> <kbd>D</kbd> 也可导航
+      </div>
+    </div>
+
+    <span style="font-size:0.7rem;color:var(--text-secondary);margin-top:auto">
+      点击图片左/右半区<br>切换上一张/下一张
+    </span>
+  </div>
+</div>
+
+<!-- ── Thumbnail Strip ─────────────────────────────────────────── -->
+<div class="thumbnail-strip-wrap">
+  <div class="thumbnail-strip" id="thumbnail-strip">
+    <!-- Dynamically filled -->
+  </div>
+</div>
+
+<!-- ── Toast Container ─────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ── Script ──────────────────────────────────────────────────── -->
+<script>
+(function() {
+  'use strict';
+
+  // ── State ────────────────────────────────────────────────────
+  let images = [];
+  let humanLabels = {};     // human-assigned labels (test set: all labels; train set: overrides)
+  let baseLabels = {};      // training set: labels from JSONL
+  let trainingInfo = {};    // training set: {filename: {original_label, reasoning, instruction}}
+  let currentIndex = 0;
+  let currentDataset = 'test';  // 'test' | 'training'
+
+  // ── DOM refs ─────────────────────────────────────────────────
+  const $img = document.getElementById('current-image');
+  const $loading = document.getElementById('image-loading');
+  const $thumbStrip = document.getElementById('thumbnail-strip');
+  const $jumpInput = document.getElementById('jump-input');
+  const $progressBar = document.getElementById('progress-bar');
+  const $labelStatus = document.getElementById('label-status');
+  const $statusDot = document.getElementById('status-dot');
+  const $statusText = document.getElementById('status-text');
+  const $infoFilename = document.getElementById('info-filename');
+  const $infoDataset = document.getElementById('info-dataset');
+  const $labelSectionTitle = document.getElementById('label-section-title');
+  const $overrideIndicator = document.getElementById('override-indicator');
+  const $trainingInfoBlock = document.getElementById('training-info-block');
+  const $originalLabelBadge = document.getElementById('original-label-badge');
+  const $reasoningText = document.getElementById('reasoning-text');
+  const $toastContainer = document.getElementById('toast-container');
+
+  // ── API path helpers ─────────────────────────────────────────
+  function apiPrefix() {
+    return '/api/' + (currentDataset === 'training' ? 'training' : 'test');
+  }
+
+  function imageUrl(filename) {
+    return apiPrefix() + '/image/' + encodeURIComponent(filename);
+  }
+
+  function thumbUrl(filename) {
+    return apiPrefix() + '/thumbnail/' + encodeURIComponent(filename);
+  }
+
+  // ── Toast ────────────────────────────────────────────────────
+  function showToast(msg, type) {
+    type = type || 'info';
+    var el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = msg;
+    $toastContainer.appendChild(el);
+    setTimeout(function() { el.remove(); }, 2000);
+  }
+
+  // ── API helpers ──────────────────────────────────────────────
+  async function apiGet(path) {
+    var resp = await fetch(path);
+    if (!resp.ok) throw new Error('API error: ' + resp.status);
+    return resp.json();
+  }
+
+  async function apiPost(path, body) {
+    var resp = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('API error: ' + resp.status);
+    return resp.json();
+  }
+
+  // ── Compute effective label (training: human override > base; test: human only) ─
+  function getEffectiveLabel(filename) {
+    if (currentDataset === 'training') {
+      if (filename in humanLabels) return humanLabels[filename];
+      if (filename in baseLabels) return baseLabels[filename];
+      return undefined;
+    }
+    // test set
+    return humanLabels[filename];
+  }
+
+  // ── Load image ───────────────────────────────────────────────
+  async function loadImage(index) {
+    if (index < 0 || index >= images.length) return;
+    currentIndex = index;
+
+    var filename = images[index];
+    $infoFilename.textContent = filename;
+    $img.style.display = 'none';
+    $loading.style.display = 'block';
+    $loading.textContent = '加载中…';
+
+    $img.src = imageUrl(filename);
+    $img.onload = function() {
+      $img.style.display = 'block';
+      $loading.style.display = 'none';
+    };
+    $img.onerror = function() {
+      $loading.textContent = '加载失败';
+      showToast('图片加载失败: ' + filename, 'error');
+    };
+
+    updateLabelStatus();
+    updateTrainingInfo(filename);
+    updateThumbnailActive();
+    $jumpInput.value = index + 1;
+
+    // Scroll thumbnail into view
+    var thumb = document.querySelector('.thumb-item[data-index="' + index + '"]');
+    if (thumb) thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+
+  // ── Update training info panel ───────────────────────────────
+  function updateTrainingInfo(filename) {
+    if (currentDataset !== 'training') {
+      $trainingInfoBlock.style.display = 'none';
+      $labelSectionTitle.textContent = '标注状态';
+      $overrideIndicator.style.display = 'none';
+      return;
+    }
+
+    $trainingInfoBlock.style.display = '';
+    $labelSectionTitle.textContent = '人工标注';
+
+    var info = trainingInfo[filename];
+    if (!info) {
+      $originalLabelBadge.textContent = '无 JSONL 数据';
+      $originalLabelBadge.className = 'original-label-badge';
+      $reasoningText.textContent = '该图片不在训练数据 JSONL 中';
+      $overrideIndicator.style.display = 'none';
+      return;
+    }
+
+    // Show original label badge
+    $originalLabelBadge.classList.remove('meteorite', 'non-meteorite');
+    if (info.original_label === 1) {
+      $originalLabelBadge.textContent = '☄ 陨石 (JSONL)';
+      $originalLabelBadge.classList.add('meteorite');
+    } else {
+      $originalLabelBadge.textContent = '🪨 非陨石 (JSONL)';
+      $originalLabelBadge.classList.add('non-meteorite');
+    }
+
+    // Show reasoning
+    $reasoningText.textContent = info.reasoning || '(无推理文本)';
+
+    // Show override indicator
+    if (filename in humanLabels) {
+      var humanLabel = humanLabels[filename];
+      var origLabel = info.original_label;
+      if (humanLabel !== origLabel) {
+        $overrideIndicator.style.display = '';
+        $overrideIndicator.textContent = '⚠ 人工标注与原始标注不同';
+      } else {
+        $overrideIndicator.style.display = '';
+        $overrideIndicator.textContent = '✓ 人工标注与原始标注一致';
+      }
+    } else {
+      $overrideIndicator.style.display = 'none';
+    }
+  }
+
+  // ── Label operations ─────────────────────────────────────────
+  async function setLabel(filename, label) {
+    try {
+      var result = await apiPost(apiPrefix() + '/label', { filename: filename, label: label });
+      humanLabels[filename] = label;
+      updateLabelStatus();
+      updateTrainingInfo(filename);
+      updateThumbnailLabels();
+      updateProgress(result.progress);
+      updateThumbnailActive();
+
+      var labelNames = {1: '☄ 陨石', 0: '🪨 非陨石'};
+      showToast('已标注: ' + filename + ' → ' + (labelNames[label] || label), 'success');
+    } catch (e) {
+      showToast('保存失败: ' + e.message, 'error');
+    }
+  }
+
+  async function clearLabel(filename) {
+    try {
+      var result = await apiPost(apiPrefix() + '/label', { filename: filename, label: null });
+      delete humanLabels[filename];
+      updateLabelStatus();
+      updateTrainingInfo(filename);
+      updateThumbnailLabels();
+      updateProgress(result.progress);
+      updateThumbnailActive();
+      showToast('已取消标注: ' + filename, 'info');
+    } catch (e) {
+      showToast('操作失败: ' + e.message, 'error');
+    }
+  }
+
+  // ── Navigation ───────────────────────────────────────────────
+  function goPrev() {
+    if (currentIndex > 0) loadImage(currentIndex - 1);
+  }
+
+  function goNext() {
+    if (currentIndex < images.length - 1) loadImage(currentIndex + 1);
+  }
+
+  function jumpTo(index) {
+    if (index >= 0 && index < images.length) {
+      loadImage(index);
+    } else {
+      showToast('无效的编号，请输入 1～' + images.length, 'error');
+    }
+  }
+
+  // ── Label & go next ──────────────────────────────────────────
+  async function labelAndNext(label) {
+    if (images.length === 0) return;
+    var filename = images[currentIndex];
+    await setLabel(filename, label);
+    if (currentIndex < images.length - 1) {
+      loadImage(currentIndex + 1);
+    }
+  }
+
+  // ── UI updates ───────────────────────────────────────────────
+  function updateLabelStatus() {
+    if (images.length === 0) return;
+    var filename = images[currentIndex];
+    var effectiveLabel = getEffectiveLabel(filename);
+
+    $labelStatus.classList.remove('meteorite', 'non-meteorite', 'unlabeled');
+    $statusDot.classList.remove('meteorite', 'non-meteorite', 'unlabeled');
+
+    if (effectiveLabel === 1) {
+      $labelStatus.classList.add('meteorite');
+      $statusDot.classList.add('meteorite');
+      if (currentDataset === 'training' && !(filename in humanLabels)) {
+        $statusText.textContent = '☄ 陨石 (原始标注)';
+      } else {
+        $statusText.textContent = '☄ 陨石 Meteorite';
+      }
+    } else if (effectiveLabel === 0) {
+      $labelStatus.classList.add('non-meteorite');
+      $statusDot.classList.add('non-meteorite');
+      if (currentDataset === 'training' && !(filename in humanLabels)) {
+        $statusText.textContent = '🪨 非陨石 (原始标注)';
+      } else {
+        $statusText.textContent = '🪨 非陨石 Non-Meteorite';
+      }
+    } else {
+      $labelStatus.classList.add('unlabeled');
+      $statusDot.classList.add('unlabeled');
+      $statusText.textContent = '未标注 Unlabeled';
+    }
+  }
+
+  function updateProgress(progress) {
+    if (!progress) return;
+    var pct = progress.total > 0 ? Math.round(progress.labeled / progress.total * 100) : 0;
+    document.getElementById('header-count').textContent = progress.labeled;
+    document.getElementById('header-total').textContent = progress.total;
+    document.getElementById('header-pct').textContent = pct + '%';
+    document.getElementById('header-m').textContent = progress.meteorite;
+    document.getElementById('header-n').textContent = progress.non_meteorite;
+    $progressBar.style.width = pct + '%';
+  }
+
+  function updateThumbnailActive() {
+    document.querySelectorAll('.thumb-item').forEach(function(el) {
+      var idx = parseInt(el.getAttribute('data-index'));
+      el.classList.toggle('active', idx === currentIndex);
+    });
+  }
+
+  function updateThumbnailLabels() {
+    document.querySelectorAll('.thumb-item').forEach(function(el) {
+      var filename = el.getAttribute('data-filename');
+      var label = getEffectiveLabel(filename);
+      el.classList.remove('labeled-1', 'labeled-0');
+      if (label === 1) el.classList.add('labeled-1');
+      else if (label === 0) el.classList.add('labeled-0');
+    });
+  }
+
+  // ── Build thumbnail strip ────────────────────────────────────
+  function buildThumbnails() {
+    $thumbStrip.innerHTML = '';
+    // For training set with 5098 images, limit thumbnails to avoid DOM overload
+    var displayImages = images;
+    var step = 1;
+    if (images.length > 1000) {
+      step = Math.ceil(images.length / 500); // show max ~500 thumbnails
+    }
+
+    images.forEach(function(filename, i) {
+      var div = document.createElement('div');
+      div.className = 'thumb-item';
+      div.setAttribute('data-index', i);
+      div.setAttribute('data-filename', filename);
+
+      var img = document.createElement('img');
+      // Lazy load: only load thumbnail if within visible range
+      if (i % step === 0) {
+        img.src = thumbUrl(filename);
+      } else {
+        img.dataset.src = thumbUrl(filename);
+        // Load on scroll visibility
+      }
+      img.alt = filename;
+      img.loading = 'lazy';
+
+      var idx = document.createElement('span');
+      idx.className = 'thumb-index';
+      idx.textContent = i + 1;
+
+      div.appendChild(img);
+      div.appendChild(idx);
+
+      div.addEventListener('click', function() {
+        loadImage(i);
+      });
+
+      $thumbStrip.appendChild(div);
+    });
+
+    // Lazy-load thumbnails that were deferred
+    if (step > 1) {
+      var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            var el = entry.target;
+            if (el.dataset.src) {
+              el.src = el.dataset.src;
+              delete el.dataset.src;
+            }
+            observer.unobserve(el);
+          }
+        });
+      }, { root: $thumbStrip, rootMargin: '200px' });
+
+      $thumbStrip.querySelectorAll('img[data-src]').forEach(function(img) {
+        observer.observe(img);
+      });
+    }
+
+    updateThumbnailLabels();
+    updateThumbnailActive();
+  }
+
+  // ── CSV Export ───────────────────────────────────────────────
+  async function exportCSV() {
+    try {
+      var resp = await fetch(apiPrefix() + '/export');
+      if (!resp.ok) throw new Error('Export failed');
+      var blob = await resp.blob();
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = currentDataset === 'training' ? 'submission_train_labels.csv' : 'submission_test_labels.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('CSV 导出成功!', 'success');
+    } catch (e) {
+      showToast('导出失败: ' + e.message, 'error');
+    }
+  }
+
+  // ── Keyboard handler ─────────────────────────────────────────
+  function handleKeyboard(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    switch (e.key.toLowerCase()) {
+      case 'arrowleft':
+      case 'a':
+        e.preventDefault();
+        goPrev();
+        break;
+      case 'arrowright':
+      case 'd':
+        e.preventDefault();
+        goNext();
+        break;
+      case 'm':
+        e.preventDefault();
+        labelAndNext(1);
+        break;
+      case 'n':
+        e.preventDefault();
+        labelAndNext(0);
+        break;
+      case 'u':
+        e.preventDefault();
+        if (images.length > 0) clearLabel(images[currentIndex]);
+        break;
+    }
+  }
+
+  // ── Dataset switching ────────────────────────────────────────
+  async function switchDataset(dataset) {
+    if (currentDataset === dataset) return;
+
+    currentDataset = dataset;
+    currentIndex = 0;
+    images = [];
+    humanLabels = {};
+    baseLabels = {};
+    trainingInfo = {};
+
+    // Update tab styles
+    document.querySelectorAll('.dataset-tab').forEach(function(tab) {
+      tab.classList.toggle('active', tab.getAttribute('data-dataset') === dataset);
+    });
+
+    // Update dataset label
+    $infoDataset.textContent = dataset === 'training' ? '训练集 (train_images_extracted_white_bg)' : '测试集 (test_images-v2)';
+
+    try {
+      var prefix = apiPrefix();
+
+      if (dataset === 'training') {
+        // Load images + labels (base + human)
+        var [imgData, labelData, progressData] = await Promise.all([
+          apiGet(prefix + '/images'),
+          apiGet(prefix + '/labels'),
+          apiGet(prefix + '/progress')
+        ]);
+        images = imgData.images;
+        baseLabels = labelData.base_labels || {};
+        humanLabels = labelData.human_labels || {};
+        // Pre-load training info for current image later
+        updateProgress(progressData);
+      } else {
+        // Test set
+        var [imgData, labelData, progressData] = await Promise.all([
+          apiGet(prefix + '/images'),
+          apiGet(prefix + '/labels'),
+          apiGet(prefix + '/progress')
+        ]);
+        images = imgData.images;
+        humanLabels = labelData.labels || {};
+        baseLabels = {};
+        trainingInfo = {};
+        updateProgress(progressData);
+      }
+
+      document.getElementById('header-total').textContent = images.length;
+
+      if (images.length === 0) {
+        showToast('没有找到图片！', 'error');
+        return;
+      }
+
+      $jumpInput.max = images.length;
+      $jumpInput.placeholder = '1～' + images.length;
+
+      buildThumbnails();
+      loadImage(0);
+
+      // Prefetch training info for first image
+      if (dataset === 'training' && images.length > 0) {
+        fetchTrainingInfo(images[0]);
+      }
+
+    } catch (e) {
+      showToast('切换数据集失败: ' + e.message, 'error');
+      console.error(e);
+    }
+  }
+
+  // ── Fetch training info for a single image ───────────────────
+  async function fetchTrainingInfo(filename) {
+    if (currentDataset !== 'training') return;
+    if (trainingInfo[filename]) return; // already cached
+    try {
+      var info = await apiGet(apiPrefix() + '/info/' + encodeURIComponent(filename));
+      trainingInfo[filename] = info;
+      // If this is still the current image, update the panel
+      if (images[currentIndex] === filename) {
+        updateTrainingInfo(filename);
+      }
+    } catch (e) {
+      console.error('Failed to fetch training info:', e);
+    }
+  }
+
+  // ── Prefetch nearby training info ────────────────────────────
+  async function prefetchNearbyInfo() {
+    if (currentDataset !== 'training') return;
+    var range = 5;
+    for (var i = Math.max(0, currentIndex - range); i <= Math.min(images.length - 1, currentIndex + range); i++) {
+      fetchTrainingInfo(images[i]);
+    }
+  }
+
+  // ── Initialize ───────────────────────────────────────────────
+  async function init() {
+    // Start with test set (default)
+    await switchDataset('test');
+  }
+
+  // ── Event listeners ──────────────────────────────────────────
+  document.getElementById('btn-prev').addEventListener('click', goPrev);
+  document.getElementById('btn-next').addEventListener('click', goNext);
+  document.getElementById('btn-meteorite').addEventListener('click', function() { labelAndNext(1); });
+  document.getElementById('btn-non').addEventListener('click', function() { labelAndNext(0); });
+  document.getElementById('btn-clear').addEventListener('click', function() {
+    if (images.length > 0) clearLabel(images[currentIndex]);
+  });
+  document.getElementById('btn-export').addEventListener('click', exportCSV);
+  document.getElementById('btn-jump').addEventListener('click', function() {
+    var num = parseInt($jumpInput.value, 10);
+    if (!isNaN(num) && num >= 1 && num <= images.length) {
+      jumpTo(num - 1);
+    } else {
+      showToast('请输入 1～' + images.length + ' 之间的编号', 'error');
+    }
+  });
+  $jumpInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      document.getElementById('btn-jump').click();
+    }
+  });
+
+  // Dataset tabs
+  document.querySelectorAll('.dataset-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      var ds = this.getAttribute('data-dataset');
+      switchDataset(ds);
+    });
+  });
+
+  // Image overlay navigation
+  document.getElementById('overlay-prev').addEventListener('click', function(e) {
+    e.stopPropagation();
+    goPrev();
+  });
+  document.getElementById('overlay-next').addEventListener('click', function(e) {
+    e.stopPropagation();
+    goNext();
+  });
+
+  // Click zones
+  document.getElementById('click-left').addEventListener('click', goPrev);
+  document.getElementById('click-right').addEventListener('click', goNext);
+
+  // Keyboard
+  document.addEventListener('keydown', handleKeyboard);
+
+  // Prefetch nearby training info when navigating
+  var origLoadImage = loadImage;
+  loadImage = async function(index) {
+    await origLoadImage(index);
+    if (currentDataset === 'training') {
+      fetchTrainingInfo(images[index]);
+      // Delay prefetch to not block navigation
+      setTimeout(prefetchNearbyInfo, 200);
+    }
+  };
+
+  // ── Start! ───────────────────────────────────────────────────
+  init();
+
+})();
+</script>
+
+</body>
+</html>

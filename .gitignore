@@ -9,3 +9,6 @@ data/*
 !data/dataset.py
 !data/sample_submission.csv
 !data/train_labels.csv
+data.zip
+test/*
+nohup.out
